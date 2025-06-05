@@ -621,7 +621,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         startPoint.y = HIWORD(lParam);
         endPoint = startPoint;
         drawingActive = true;
-       
+
         if (currentActiveShapeType == SHAPE_POLYGON || currentActiveShapeType == SHAPE_CURVE) {
             currentPoints.push_back(startPoint);
             OutputDebugString(L"WM_LBUTTONDOWN: Point added for multi-point shape.\n");
@@ -639,19 +639,19 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             else {
                 if (currentFillingAlgorithm == ALGO_FLOOD_FILL_RECURSIVE) {
                     POINT x = { 0,0 };
-                   drawnShapes.push_back({ currentActiveShapeType, { startPoint , x }});
-                    
+                    drawnShapes.push_back({ currentActiveShapeType, { startPoint , x } });
+
                     OutputDebugString(L"WM_LBUTTONDOWN: Initiating Recursive Flood Fill.\n");
-                  //  FloodFillRecursive(hdcMem, startPoint.x, startPoint.y, currentFillColor, RGB(0,0,0));
-                   
-                    
+                    //  FloodFillRecursive(hdcMem, startPoint.x, startPoint.y, currentFillColor, RGB(0,0,0));
+
+
                 }
                 else if (currentFillingAlgorithm == ALGO_FLOOD_FILL_NON_RECURSIVE) {
                     POINT x = { 1,1 };
                     drawnShapes.push_back({ currentActiveShapeType, { startPoint , x } });
                     OutputDebugString(L"WM_LBUTTONDOWN: Initiating NON Recursive Flood Fill.\n");
-                   // FloodFillNRecursive(hdcMem, startPoint.x, startPoint.y, currentFillColor, RGB(0, 0, 0));
-                   
+                    // FloodFillNRecursive(hdcMem, startPoint.x, startPoint.y, currentFillColor, RGB(0, 0, 0));
+
                 }
                 else {
                     // For other fills, the user must select a specific fill method first.
@@ -668,7 +668,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             OutputDebugString(L"WM_LBUTTONDOWN: Starting filled quarter circle draw.\n");
         }
     }
-                       
+
                        break;
 
     case WM_MOUSEMOVE: {
@@ -821,7 +821,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         // 2. Draw all stored shapes to memory DC
         for (const auto& shapePair : drawnShapes) {
             Shape shapeType = shapePair.first;
-          
+
             const std::vector<POINT>& points = shapePair.second;
 
             if (points.empty()) continue;
@@ -900,13 +900,13 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 int size = points[1].x; // Size stored in x-component of 2nd point
                 DrawSquareWithVerticalHermite(hdcMem, points[0].x, points[0].y, size, currentFillColor);
             }
-            else if(shapeType == SHAPE_FLOOD_FILL)
+            else if (shapeType == SHAPE_FLOOD_FILL)
             {
-                if(points.back().x == 0)
-                FloodFillRecursive(hdcMem, points[0].x, points[0].y, RGB(0, 255, 0),RGB(0, 0, 0) );
+                if (points.back().x == 0)
+                    FloodFillRecursive(hdcMem, points[0].x, points[0].y, RGB(0, 255, 0), RGB(0, 0, 0));
                 else
                 {
-                    FloodFillNRecursive(hdcMem, points[0].x, points[0].y,  RGB(0, 0, 0), RGB(0, 255, 0));
+                    FloodFillNRecursive(hdcMem, points[0].x, points[0].y, RGB(0, 0, 0), RGB(0, 255, 0));
                 }
             }
         }
@@ -1016,218 +1016,341 @@ void swapPoints(POINT& p1, POINT& p2) {
 }
 
 // --- General Drawing Functions ---
-void DrawLine(HDC hdc, int x0, int y0, int x1, int y1, COLORREF color) {
-    // Bresenham's Line Algorithm (from user's snippet, used as default)
-    int dx = abs(x1 - x0), dy = abs(y1 - y0);
-    int sx = (x0 < x1) ? 1 : -1;
-    int sy = (y0 < y1) ? 1 : -1;
-    int err = dx - dy;
+void DrawLine(HDC hdc, POINT p1, POINT p2, COLORREF color) {
+    int x1 = p1.x, y1 = p1.y;
+    int x2 = p2.x, y2 = p2.y;
+    int dx = x2 - x1;
+    int dy = y2 - y1;
 
-    while (true) {
-        SetPixelSafe(hdc, x0, y0, color);
-        if (x0 == x1 && y0 == y1) break;
-        int e2 = 2 * err;
-        if (e2 > -dy) {
-            err -= dy;
-            x0 += sx;
+    if (abs(dy) <= abs(dx)) {
+        if (x1 > x2) {
+            std::swap(x1, x2);
+            std::swap(y1, y2);
         }
-        if (e2 < dx) {
-            err += dx;
-            y0 += sy;
+
+        dx = x2 - x1;
+        dy = y2 - y1;
+        int d = 2 * abs(dy) - dx;
+        int y = y1;
+        int s = (dy >= 0) ? 1 : -1;
+
+        for (int x = x1; x <= x2; x++) {
+            SetPixel(hdc, x, y, color);
+            if (d > 0) {
+                y += s;
+                d += 2 * (abs(dy) - dx);
+            }
+            d += 2 * abs(dy);
+        }
+    }
+    else {
+        if (y1 > y2) {
+            std::swap(x1, x2);
+            std::swap(y1, y2);
+        }
+
+        dx = x2 - x1;
+        dy = y2 - y1;
+        int d = 2 * abs(dx) - dy;
+        int x = x1;
+        int s = (dx >= 0) ? 1 : -1;
+
+        for (int y = y1; y <= y2; y++) {
+            SetPixel(hdc, x, y, color);
+            if (d > 0) {
+                x += s;
+                d += 2 * (abs(dx) - dy);
+            }
+            d += 2 * abs(dx);
         }
     }
 }
 
-// --- Line Algorithms ---
+// ----------------- Line Algorithms ------------------
+
+
 void DrawDDALine(HDC hdc, POINT p1, POINT p2, COLORREF color) {
-    int dx = p2.x - p1.x;
-    int dy = p2.y - p1.y;
-    int steps = max(abs(dx), abs(dy));
+    int x1 = p1.x, y1 = p1.y;
+    int x2 = p2.x, y2 = p2.y;
 
-    if (steps == 0) { SetPixelSafe(hdc, p1.x, p1.y, color); return; }
+    if (x1 > x2) {
+        std::swap(x1, x2);
+        std::swap(y1, y2);
+    }
 
-    float xIncrement = static_cast<float>(dx) / steps;
-    float yIncrement = static_cast<float>(dy) / steps;
+    int dx = x2 - x1;
+    int dy = y2 - y1;
 
-    float x = p1.x;
-    float y = p1.y;
+    if (abs(dx) >= abs(dy)) {
+        double m = (double)dy / dx;
+        double y = y1;
+        int x = x1;
+        while (x <= x2) {
+            SetPixel(hdc, x, Round(y), color);
+            y += m;
+            x++;
+        }
+    }
+    else {
+        if (y1 > y2) {
+            std::swap(x1, x2);
+            std::swap(y1, y2);
+        }
 
-    for (int k = 0; k <= steps; ++k) {
-        SetPixelSafe(hdc, Round(x), Round(y), color);
-        x += xIncrement;
-        y += yIncrement;
+        double mi = (double)dx / dy;
+        double x = x1;
+        int y = y1;
+        while (y <= y2) {
+            SetPixel(hdc, Round(x), y, color);
+            x += mi;
+            y++;
+        }
     }
 }
+
 
 void DrawMidpointLine(HDC hdc, POINT p1, POINT p2, COLORREF color) {
-    // Bresenham's Line (already present in DrawLine, but duplicated here for explicit call)
-    DrawLine(hdc, p1.x, p1.y, p2.x, p2.y, color);
+    int x1 = p1.x, y1 = p1.y;
+    int x2 = p2.x, y2 = p2.y;
+    int dx = x2 - x1;
+    int dy = y2 - y1;
+
+    if (abs(dy) <= abs(dx)) {
+        if (x1 > x2) {
+            std::swap(x1, x2);
+            std::swap(y1, y2);
+        }
+
+        dx = x2 - x1;
+        dy = y2 - y1;
+        int d = 2 * abs(dy) - dx;
+        int y = y1;
+        int s = (dy >= 0) ? 1 : -1;
+
+        for (int x = x1; x <= x2; x++) {
+            SetPixel(hdc, x, y, color);
+            if (d > 0) {
+                y += s;
+                d += 2 * (abs(dy) - dx);
+            }
+            d += 2 * abs(dy);
+        }
+    }
+    else {
+        if (y1 > y2) {
+            std::swap(x1, x2);
+            std::swap(y1, y2);
+        }
+
+        dx = x2 - x1;
+        dy = y2 - y1;
+        int d = 2 * abs(dx) - dy;
+        int x = x1;
+        int s = (dx >= 0) ? 1 : -1;
+
+        for (int y = y1; y <= y2; y++) {
+            SetPixel(hdc, x, y, color);
+            if (d > 0) {
+                x += s;
+                d += 2 * (abs(dx) - dy);
+            }
+            d += 2 * abs(dx);
+        }
+    }
 }
+
 
 void DrawParametricLine(HDC hdc, POINT p1, POINT p2, COLORREF color) {
     int dx = p2.x - p1.x;
     int dy = p2.y - p1.y;
-    int steps = max(abs(dx), abs(dy)); // Number of points to sample
+    double steps = 1.0 / max(abs(dx), abs(dy));
 
-    if (steps == 0) { SetPixelSafe(hdc, p1.x, p1.y, color); return; }
-
-    for (int i = 0; i <= steps; ++i) {
-        double t = static_cast<double>(i) / steps;
-        int x = Round(p1.x + t * dx);
-        int y = Round(p1.y + t * dy);
-        SetPixelSafe(hdc, x, y, color);
+    for (double t = 0.0f; t <= 1.0f; t += steps) {
+        int x = static_cast<int>(p1.x + t * dx);
+        int y = static_cast<int>(p1.y + t * dy);
+        SetPixel(hdc, x, y, color);
     }
 }
 
-// --- Circle Algorithms ---
+
+// --------------- Circle Algorithms ---------------------
+
 void Draw8Points(HDC hdc, int xc, int yc, int x, int y, COLORREF c) {
-    SetPixelSafe(hdc, xc + x, yc + y, c);
-    SetPixelSafe(hdc, xc - x, yc + y, c);
-    SetPixelSafe(hdc, xc + x, yc - y, c);
-    SetPixelSafe(hdc, xc - x, yc - y, c);
-    SetPixelSafe(hdc, xc + y, yc + x, c);
-    SetPixelSafe(hdc, xc - y, yc + x, c);
-    SetPixelSafe(hdc, xc + y, yc - x, c);
-    SetPixelSafe(hdc, xc - y, yc - x, c);
+    SetPixel(hdc, xc + x, yc + y, c);
+    SetPixel(hdc, xc - x, yc + y, c);
+    SetPixel(hdc, xc + x, yc - y, c);
+    SetPixel(hdc, xc - x, yc - y, c);
+    SetPixel(hdc, xc + y, yc + x, c);
+    SetPixel(hdc, xc - y, yc + x, c);
+    SetPixel(hdc, xc + y, yc - x, c);
+    SetPixel(hdc, xc - y, yc - x, c);
 }
 
 void DrawDirectCircle(HDC hdc, int xc, int yc, int r, COLORREF color) {
+    int x = 0, y = r;
     int r2 = r * r;
-    for (int x = 0; x <= r; ++x) {
-        int y = Round(sqrt(r2 - x * x));
-        Draw8Points(hdc, xc, yc, x, y, color);
-    }
-    for (int y = 0; y <= r; ++y) { // To cover flat circles more robustly
-        int x = Round(sqrt(r2 - y * y));
+    Draw8Points(hdc, xc, yc, x, y, color);
+    while (x < y) {
+        x++;
+        y = round(sqrt((double)(r2 - x * x)));
         Draw8Points(hdc, xc, yc, x, y, color);
     }
 }
 
 void DrawPolarCircle(HDC hdc, int xc, int yc, int r, COLORREF color) {
-    double dtheta = 1.0 / r; // Angle increment based on radius for smoother curve
-    for (double theta = 0; theta <= M_PI / 4 + 0.001; theta += dtheta) { // Iterate up to 45 degrees
-        int x = Round(r * cos(theta));
-        int y = Round(r * sin(theta));
-        Draw8Points(hdc, xc, yc, x, y, color);
+    double dtheta = 1.0 / r;
+    for (double theta = 0; theta < 45; theta += dtheta) {
+        double x = Round(xc + r * cos(theta));
+        double y = Round(yc + r * sin(theta));
+        SetPixel(hdc, x, y, color);
     }
 }
 
 void DrawIterativePolarCircle(HDC hdc, int xc, int yc, int r, COLORREF color) {
     double dtheta = 1.0 / r;
-    double cos_dtheta = cos(dtheta);
-    double sin_dtheta = sin(dtheta);
+    double ctheta = cos(dtheta);
+    double stheta = sin(dtheta);
     double x = r;
     double y = 0;
-
-    for (int i = 0; i <= Round(M_PI / 4 / dtheta); ++i) { // Roughly 45 degrees of steps
+    Draw8Points(hdc, xc, yc, Round(x), Round(y), color);//first 8 point
+    while (x > y) {
+        x = x * ctheta - y * stheta;
+        y = x * stheta + y * ctheta;
         Draw8Points(hdc, xc, yc, Round(x), Round(y), color);
-        double next_x = x * cos_dtheta - y * sin_dtheta;
-        double next_y = x * sin_dtheta + y * cos_dtheta;
-        x = next_x;
-        y = next_y;
     }
 }
 
 void DrawMidpointCircle(HDC hdc, int xc, int yc, int r, COLORREF color) {
     int x = 0, y = r;
-    int p = 1 - r; // Initial decision parameter
-
+    int d = 1 - r;
     while (x <= y) {
         Draw8Points(hdc, xc, yc, x, y, color);
-        x++;
-        if (p < 0) {
-            p += 2 * x + 1;
-        }
+        if (d < 0)
+            d += 2 * x + 3;
         else {
+            d += 2 * (x - y) + 5;
             y--;
-            p += 2 * (x - y) + 1;
+
         }
+        x++;
     }
 }
 
 void DrawModifiedMidpointCircle(HDC hdc, int xc, int yc, int r, COLORREF color) {
-    // This is essentially Bresenham's (Midpoint) Circle Algorithm.
-    // "Modified" often refers to slight variations in initial parameters or step updates
-    // for integer arithmetic, but the core idea is the same.
-    // For this implementation, it uses the standard Midpoint algorithm.
-    DrawMidpointCircle(hdc, xc, yc, r, color);
+    int x = 0, y = r;
+    int d = 1 - r;
+    int d1 = 3;
+    int d2 = 5 - 2 * r;
+    while (x <= y) {
+        Draw8Points(hdc, xc, yc, x, y, color);
+        if (d < 0) {
+            d += d1;
+            d1 += 2;
+            d2 += 2;
+        }
+        else {
+            d += d2;
+            d1 += 2;
+            d2 += 4;
+            y--;
+        }
+        x++;
+    }
 }
 
-// --- Ellipse Algorithms ---
+// -----------------  Ellipse Algorithms --------------------
+
 void Draw4Points(HDC hdc, int xc, int yc, int x, int y, COLORREF c) {
-    SetPixelSafe(hdc, xc + x, yc + y, c);
-    SetPixelSafe(hdc, xc + x, yc - y, c);
-    SetPixelSafe(hdc, xc - x, yc + y, c);
-    SetPixelSafe(hdc, xc - x, yc - y, c);
+
+
+    SetPixel(hdc, xc + x, yc + y, c);
+    SetPixel(hdc, xc + x, yc - y, c);
+    SetPixel(hdc, xc - x, yc + y, c);
+    SetPixel(hdc, xc - x, yc - y, c);
+}
+
+double dy_dx(int x, double A, double B) {
+    int y = B * sqrt(1 - (pow(x, 2) / pow(A, 2)));
+    return (-x * pow(B, 2)) / (y * pow(A, 2));
 }
 
 void DrawDirectEllipse(HDC hdc, int xc, int yc, int a, int b, COLORREF color) {
-    if (a == 0 || b == 0) return; // Avoid division by zero
-    double a2 = (double)a * a;
-    double b2 = (double)b * b;
-
-    // Region 1 (slope |dy/dx| <= 1)
-    for (int x = 0; x <= a; ++x) {
-        int y = Round(b * sqrt(1.0 - (x * x) / a2));
-        Draw4Points(hdc, xc, yc, x, y, color);
+    int x = 0, y = b;
+    Draw4Points(hdc, xc, yc, x, y, color);
+    while (x != a && y != 0) {
+        if (dy_dx(x, a, b) <= 1) {
+            x++;
+            y = (b * sqrt(1 - (pow(x, 2) / pow(a, 2))));
+            Draw4Points(hdc, xc, yc, x, y, color);
+        }
     }
-    // Region 2 (slope |dy/dx| > 1)
-    for (int y = 0; y <= b; ++y) {
-        int x = Round(a * sqrt(1.0 - (y * y) / b2));
-        Draw4Points(hdc, xc, yc, x, y, color);
+    x = a, y = 0;
+    Draw4Points(hdc, xc, yc, x, y, color);
+    while ((y != b && x != 0)) {
+        if ((dy_dx(x, b, a) < 1)) {
+            y++;
+            x = (a * sqrt(1 - (pow(y, 2) / pow(b, 2))));
+            Draw4Points(hdc, xc, yc, x, y, color);
+        }
     }
 }
 
 void DrawPolarEllipse(HDC hdc, int xc, int yc, int a, int b, COLORREF color) {
     double dtheta = 1.0 / max(a, b);
-    for (double theta = 0; theta <= M_PI / 2 + 0.001; theta += dtheta) { // Iterate up to 90 degrees
-        int x = Round(a * cos(theta));
-        int y = Round(b * sin(theta));
-        Draw4Points(hdc, xc, yc, x, y, color);
+    for (double theta = 0; theta < 90; theta += dtheta) {
+        double x = Round(xc + a * cos(theta));
+        double y = Round(yc + b * sin(theta));
+        SetPixel(hdc, x, y, color);
     }
 }
 
 void DrawMidpointEllipse(HDC hdc, int xc, int yc, int a, int b, COLORREF color) {
-    long long a2 = (long long)a * a;
-    long long b2 = (long long)b * b;
-    long long twoA2 = 2 * a2;
-    long long twoB2 = 2 * b2;
-    long long p;
-    long long x = 0, y = b;
-    long long px = 0, py = twoA2 * y; // pX, pY values (2*ry^2*x, 2*rx^2*y from circle, adjusted for ellipse)
+    int x = 0;
+    int y = b;
+    int a2 = a * a;
+    int b2 = b * b;
+    int dx = 2 * b2 * x;
+    int dy = 2 * a2 * y;
+    int p = round(b2 - a2 * b + 0.25 * a2);
 
-    // Region 1: (dy/dx) < 1.0
-    p = Round(b2 - a2 * b + 0.25 * a2); // Initial decision parameter for region 1
-    while (px < py) {
-        Draw4Points(hdc, xc, yc, (int)x, (int)y, color);
-        x++;
-        px += twoB2;
+    while (dx < dy) {
+        Draw4Points(hdc, xc, yc, x, y, color);
         if (p < 0) {
-            p += b2 + px;
-        }
-        else {
-            y--;
-            py -= twoA2;
-            p += b2 + px - py;
-        }
-    }
-
-    // Region 2: (dy/dx) >= 1.0
-    p = Round(b2 * (x + 0.5) * (x + 0.5) + a2 * (y - 1) * (y - 1) - a2 * b2); // Initial decision parameter for region 2
-    while (y >= 0) {
-        Draw4Points(hdc, xc, yc, (int)x, (int)y, color);
-        y--;
-        py -= twoA2;
-        if (p > 0) {
-            p += a2 - py;
+            x++;
+            dx += 2 * b2;
+            p += dx + b2;
         }
         else {
             x++;
-            px += twoB2;
-            p += a2 - py + px;
+            y--;
+            dx += 2 * b2;
+            dy -= 2 * a2;
+            p += dx - dy + b2;
+        }
+    }
+
+    p = round(b2 * (x + 0.5) * (x + 0.5) + a2 * (y - 1) * (y - 1) - a2 * b2);
+    while (y >= 0) {
+        SetPixelSafe(hdc, xc + x, yc + y, color);
+        SetPixelSafe(hdc, xc - x, yc + y, color);
+        SetPixelSafe(hdc, xc + x, yc - y, color);
+        SetPixelSafe(hdc, xc - x, yc - y, color);
+        if (p > 0) {
+            y--;
+            dy -= 2 * a2;
+            p += a2 - dy;
+        }
+        else {
+            y--;
+            x++;
+            dx += 2 * b2;
+            dy -= 2 * a2;
+            p += dx - dy + a2;
         }
     }
 }
+
+
 
 // --- Flood Fill Algorithms ---
 void FloodFillRecursive(HDC hdc, int x, int y, COLORREF fillColor, COLORREF targetColor) {
