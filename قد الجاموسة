@@ -399,7 +399,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     PAINTSTRUCT ps;
     CHOOSECOLOR cc;
     COLORREF acrCustColors[16]; // Custom colors for dialog
-
+    hdcMem = GetDC(hwnd);
     switch (msg) {
     case WM_CREATE: {
         // Initialize double buffering
@@ -621,7 +621,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         startPoint.y = HIWORD(lParam);
         endPoint = startPoint;
         drawingActive = true;
-
+       
         if (currentActiveShapeType == SHAPE_POLYGON || currentActiveShapeType == SHAPE_CURVE) {
             currentPoints.push_back(startPoint);
             OutputDebugString(L"WM_LBUTTONDOWN: Point added for multi-point shape.\n");
@@ -638,12 +638,20 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             }
             else {
                 if (currentFillingAlgorithm == ALGO_FLOOD_FILL_RECURSIVE) {
+                    POINT x = { 0,0 };
+                   drawnShapes.push_back({ currentActiveShapeType, { startPoint , x }});
+                    
                     OutputDebugString(L"WM_LBUTTONDOWN: Initiating Recursive Flood Fill.\n");
-                    FloodFillRecursive(hdcMem, startPoint.x, startPoint.y, currentFillColor, targetColor);
+                  //  FloodFillRecursive(hdcMem, startPoint.x, startPoint.y, currentFillColor, RGB(0,0,0));
+                   
+                    
                 }
                 else if (currentFillingAlgorithm == ALGO_FLOOD_FILL_NON_RECURSIVE) {
-                    OutputDebugString(L"WM_LBUTTONDOWN: Initiating Non-Recursive Flood Fill.\n");
-                    FloodFillNRecursive(hdcMem, startPoint.x, startPoint.y, targetColor, currentFillColor);
+                    POINT x = { 1,1 };
+                    drawnShapes.push_back({ currentActiveShapeType, { startPoint , x } });
+                    OutputDebugString(L"WM_LBUTTONDOWN: Initiating NON Recursive Flood Fill.\n");
+                   // FloodFillNRecursive(hdcMem, startPoint.x, startPoint.y, currentFillColor, RGB(0, 0, 0));
+                   
                 }
                 else {
                     // For other fills, the user must select a specific fill method first.
@@ -659,7 +667,9 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             // The quarter input will be handled on mouse up via dialog.
             OutputDebugString(L"WM_LBUTTONDOWN: Starting filled quarter circle draw.\n");
         }
-    } break;
+    }
+                       
+                       break;
 
     case WM_MOUSEMOVE: {
         if (drawingActive) {
@@ -811,6 +821,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         // 2. Draw all stored shapes to memory DC
         for (const auto& shapePair : drawnShapes) {
             Shape shapeType = shapePair.first;
+          
             const std::vector<POINT>& points = shapePair.second;
 
             if (points.empty()) continue;
@@ -888,6 +899,15 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             else if (shapeType == SHAPE_FILLED_SQUARE_HERMITE) {
                 int size = points[1].x; // Size stored in x-component of 2nd point
                 DrawSquareWithVerticalHermite(hdcMem, points[0].x, points[0].y, size, currentFillColor);
+            }
+            else if(shapeType == SHAPE_FLOOD_FILL)
+            {
+                if(points.back().x == 0)
+                FloodFillRecursive(hdcMem, points[0].x, points[0].y, RGB(0, 255, 0),RGB(0, 0, 0) );
+                else
+                {
+                    FloodFillNRecursive(hdcMem, points[0].x, points[0].y,  RGB(0, 0, 0), RGB(0, 255, 0));
+                }
             }
         }
 
@@ -1213,7 +1233,7 @@ void DrawMidpointEllipse(HDC hdc, int xc, int yc, int a, int b, COLORREF color) 
 void FloodFillRecursive(HDC hdc, int x, int y, COLORREF fillColor, COLORREF targetColor) {
     if (x < 0 || x >= clientRect.right || y < 0 || y >= clientRect.bottom) return;
     COLORREF currentPxColor = GetPixel(hdc, x, y);
-    if (currentPxColor != targetColor || currentPxColor == fillColor) return;
+    if (currentPxColor == targetColor || currentPxColor == fillColor) return;
 
     SetPixelSafe(hdc, x, y, fillColor);
     FloodFillRecursive(hdc, x + 1, y, fillColor, targetColor);
@@ -1758,6 +1778,6 @@ ATOM RegisterQuarterDialogClass(HINSTANCE hInstance) {
 // This function is not used directly, DialogBox is called with MAKEINTRESOURCE
 // It's here for completeness if you were to create a dialog dynamically.
 HWND CreateQuarterInputDialog(HWND hWndParent, HINSTANCE hInstance) {
-  
-    return (HWND)NULL; 
+
+    return (HWND)NULL;
 }
