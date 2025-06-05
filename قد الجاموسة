@@ -1,0 +1,1763 @@
+#include <windows.h>
+#include <iostream>
+#include <stdio.h>
+#include <cmath>
+#include <algorithm>
+#include <stack>
+#include <vector>
+#include <string>     // For string conversions in file I/O
+#include <fstream>    // For file I/O
+#include <sstream>    // REQUIRED for std::stringstream
+
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
+#define IDD_QUARTER_INPUT 101
+#define IDC_QUARTER_EDIT 1001 // Add this definition to resolve the undefined identifier error
+
+
+// Using Windows POINT struct for consistency with GDI
+// typedef struct tagPOINT { LONG x; LONG y; } POINT; // POINT is already defined by Windows.h
+
+enum Shape {
+    SHAPE_LINE,
+    SHAPE_CIRCLE,
+    SHAPE_ELLIPSE,
+    SHAPE_POLYGON, // For general polygons, including those for clipping
+    SHAPE_CURVE,   // For Bezier/Cardinal Spline
+    SHAPE_CLIP_RECT, // Represents the clipping rectangle itself
+    SHAPE_FILLED_CIRCLE_LINES,
+    SHAPE_FILLED_CIRCLE_CIRCLES,
+    SHAPE_FILLED_SQUARE_HERMITE,
+    SHAPE_FILLED_RECTANGLE_BEZIER,
+    SHAPE_FILLED_POLYGON_CONVEX,
+    SHAPE_FILLED_POLYGON_NONCONVEX,
+    SHAPE_FLOOD_FILL
+};
+
+enum Algorithm {
+    ALGO_NONE = 0,
+
+    // File Menu Actions
+    FILE_SAVE = 1,
+    FILE_LOAD = 2,
+    FILE_CLEAR = 3,
+
+    // Line Algorithms
+    ALGO_LINE_DDA = 4,
+    ALGO_LINE_BRESENHAM = 5,
+    ALGO_LINE_PARAMETRIC = 6,
+
+    // Color Menu Actions
+    COLOR_CHANGE_BACKGROUND = 7,
+    COLOR_CHANGE_SHAPE = 8,
+    COLOR_CHANGE_FILL = 9,
+
+    // Cursor Types
+    CURSOR_ARROW = 300,
+    CURSOR_HAND = 301,
+    CURSOR_WAIT = 302,
+    CURSOR_CROSS = 303,
+    CURSOR_HELP = 304,
+    STOP_DRAWING_CURSOR = 305, // This was from user's code, but usually setting cursor is direct.
+
+    // Circle Algorithms
+    ALGO_CIRCLE_DIRECT = 100,
+    ALGO_CIRCLE_POLAR = 101,
+    ALGO_CIRCLE_ITERATIVE_POLAR = 102,
+    ALGO_CIRCLE_MIDPOINT = 103,
+    ALGO_CIRCLE_MODIFIED_MIDPOINT = 104,
+
+    // Ellipse Algorithms
+    ALGO_ELLIPSE_DIRECT = 105,
+    ALGO_ELLIPSE_POLAR = 106,
+    ALGO_ELLIPSE_MIDPOINT = 108, // No separate Bresenham/Iterative for ellipse in my complete implementation
+    ALGO_ELLIPSE_ITERATIVE = 109,
+
+    // Drawing Modes
+    DRAW_MODE_LINE = 200,
+    DRAW_MODE_CIRCLE = 201,
+    DRAW_MODE_ELLIPSE = 202,
+    DRAW_MODE_POLYGON = 203,
+    DRAW_MODE_CURVE = 204,
+    DRAW_MODE_CLIP = 205,
+    DRAW_MODE_FILL = 206, // General fill mode activation
+
+    // Filling Specifics
+    ALGO_FILL_CIRCLE_LINES = 13,
+    ALGO_FILL_CIRCLE_CIRCLES = 14,
+    ALGO_FILL_SQUARE_HERMITE_VERTICAL = 15,
+    ALGO_FILL_RECTANGLE_BEZIER_HORIZONTAL = 16,
+    ALGO_FILL_CONVEX = 17,
+    ALGO_FILL_NONCONVEX = 25,
+    ALGO_FLOOD_FILL_RECURSIVE = 18,
+    ALGO_FLOOD_FILL_NON_RECURSIVE = 19,
+
+    // Curves
+    ALGO_CARDINAL_SPLINE = 20,
+    ALGO_BEZIER_CURVE = 26, // New ID for drawing general Bezier
+
+    // Clipping Specifics
+    ALGO_CLIP_RECTANGLE_POINT = 220,
+    ALGO_CLIP_RECTANGLE_LINE = 221,
+    ALGO_CLIP_RECTANGLE_POLYGON = 222,
+    ALGO_CLIP_SQUARE_POINT = 230,
+    ALGO_CLIP_SQUARE_LINE = 231,
+
+    // Dialog for Quarter
+    ID_FILL_QUARTER_DIALOG = 240, // For the quarter input dialog
+    ID_OK_QUARTER_DIALOG = 241
+};
+
+// Global variables for drawing state
+COLORREF currentBackgroundColor = RGB(255, 255, 255);
+COLORREF currentShapeColor = RGB(0, 0, 0);
+COLORREF currentFillColor = RGB(0, 255, 0); // Default fill color (green)
+
+Shape currentActiveShapeType = SHAPE_LINE; // What shape is currently being drawn
+Algorithm currentDrawingAlgorithm = ALGO_LINE_DDA; // What algorithm to use for the active shape
+Algorithm currentFillingAlgorithm = ALGO_NONE; // What algorithm to use for filling
+Algorithm currentClippingAlgorithm = ALGO_NONE; // What algorithm to use for clipping
+
+HCURSOR hCurrentCursor = LoadCursor(NULL, IDC_ARROW);
+
+POINT startPoint, endPoint;
+bool drawingActive = false;
+bool drawingPolygonOrCurve = false; // True if in multi-point drawing mode
+
+std::vector<POINT> currentPoints; // Stores points for active polygon/curve
+std::vector<std::pair<Shape, std::vector<POINT>>> drawnShapes; // Stores all completed shapes
+
+RECT currentClipRect = { 0,0,0,0 }; // Clipping window
+bool clipWindowDefined = false; // Flag if clipping window is set
+
+// Double buffering variables
+HDC hdcMem;
+HBITMAP hbmMem;
+HBITMAP hbmOld;
+RECT clientRect;
+
+// Forward declarations
+LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
+void AddMenus(HWND hwnd);
+void SetPixelSafe(HDC hdc, int x, int y, COLORREF color);
+int Round(double x);
+
+// --- General Drawing Functions ---
+void DrawLine(HDC hdc, int x0, int y0, int x1, int y1, COLORREF color); // Bresenham's from user's code
+
+// --- Line Algorithms ---
+void DrawDDALine(HDC hdc, POINT p1, POINT p2, COLORREF color);
+void DrawMidpointLine(HDC hdc, POINT p1, POINT p2, COLORREF color); // Bresenham is a Midpoint variant
+void DrawParametricLine(HDC hdc, POINT p1, POINT p2, COLORREF color);
+
+// --- Circle Algorithms ---
+void Draw8Points(HDC hdc, int xc, int yc, int x, int y, COLORREF c);
+void DrawDirectCircle(HDC hdc, int xc, int yc, int r, COLORREF color);
+void DrawPolarCircle(HDC hdc, int xc, int yc, int r, COLORREF color);
+void DrawIterativePolarCircle(HDC hdc, int xc, int yc, int r, COLORREF color);
+void DrawMidpointCircle(HDC hdc, int xc, int yc, int r, COLORREF color);
+void DrawModifiedMidpointCircle(HDC hdc, int xc, int yc, int r, COLORREF color);
+
+// --- Ellipse Algorithms ---
+void Draw4Points(HDC hdc, int xc, int yc, int x, int y, COLORREF c);
+void DrawDirectEllipse(HDC hdc, int xc, int yc, int a, int b, COLORREF color);
+void DrawPolarEllipse(HDC hdc, int xc, int yc, int a, int b, COLORREF color);
+void DrawMidpointEllipse(HDC hdc, int xc, int yc, int a, int b, COLORREF color);
+
+// --- Flood Fill Algorithms ---
+void FloodFillRecursive(HDC hdc, int x, int y, COLORREF fillColor, COLORREF targetColor);
+void FloodFillNRecursive(HDC hdc, int x, int y, COLORREF boundaryColor, COLORREF fillColor); // Modified signature
+
+// --- Curve Algorithms ---
+void DrawCardinalSpline(HDC hdc, const std::vector<POINT>& points, double tension, COLORREF color);
+void DrawBezierCurve(HDC hdc, POINT p0, POINT p1, POINT p2, POINT p3, COLORREF color);
+// Helper for Bezier filling (animated)
+void DrawBezierLineSegment(HDC hdc, POINT p0, POINT p1, POINT p2, POINT p3, double t_start, double t_end, COLORREF color);
+
+// --- Clipping Algorithms ---
+enum OutCode { // For Cohen-Sutherland
+    INSIDE = 0x00, // 0000
+    LEFT = 0x01,   // 0001
+    RIGHT = 0x02,  // 0010
+    BOTTOM = 0x04, // 0100
+    TOP = 0x08     // 1000
+};
+OutCode GetOutCode(int x, int y, RECT clipRect);
+POINT VIntersect(double xedge, POINT p1, POINT p2);
+POINT HIntersect(double yedge, POINT p1, POINT p2);
+void ClipPoint(HDC hdc, POINT p, RECT clipRect, COLORREF color);
+bool ClipLineCohenSutherland(HDC hdc, POINT p1, POINT p2, RECT clipRect, COLORREF color);
+bool InsideSutherlandHodgman(POINT p, int edge, RECT r);
+POINT IntersectSutherlandHodgman(POINT p1, POINT p2, int edge, RECT r);
+void ClipPolygonSutherlandHodgman(HDC hdc, const std::vector<POINT>& input, RECT clipRect, COLORREF color);
+void DrawClippingWindow(HDC hdc, RECT rect);
+
+// --- Polygon Filling Algorithms ---
+void ScanlineFill(HDC hdc, const std::vector<POINT>& polygon, COLORREF fillColor);
+
+// --- Circle Filling Algorithms ---
+void SetCirclePixelsQuarter(HDC hdc, int xc, int yc, int x, int y, int quarter, COLORREF color);
+void DrawCircleMidpointQuarter(HDC hdc, int xc, int yc, int r, int quarter, COLORREF color);
+void DrawFilledQuarterCircleWithLines(HDC hdc, int centerX, int centerY, int radius, int quarter, COLORREF color);
+void DrawFilledCircleMidpoint(HDC hdc, int xc, int yc, int r, COLORREF color); // Basic filled circle for small circles
+void DrawCirclesWithSmallCircles(HDC hdc, int centerX, int centerY, int radius, int quarter, COLORREF color);
+
+// --- Rectangle/Square Filling Algorithms ---
+void DrawRectangleOutline(HDC hdc, int left, int top, int right, int bottom, COLORREF color);
+void DrawHermiteCurve(HDC hdc, POINT p0, POINT t0, POINT p1, POINT t1, COLORREF color);
+void DrawSquareWithVerticalHermite(HDC hdc, int centerX, int centerY, int size, COLORREF color);
+
+// Quarter Input Dialog
+INT_PTR CALLBACK QuarterDialogProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam);
+int quarterInput = 1; // Default quarter
+
+// Timer for Bezier animation
+#define TIMER_ID_BEZIER_FILL 1001
+#define TIMER_INTERVAL_BEZIER_FILL 20
+int currentBezierFillStep = 0;
+POINT bezierFillP0, bezierFillP1, bezierFillP2, bezierFillP3;
+RECT bezierFillTargetRect; // To know where to draw
+
+// --- WinMain ---
+int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow) {
+    WNDCLASS wc = { 0 };
+    wc.hbrBackground = CreateSolidBrush(currentBackgroundColor); // Initial background
+    wc.hCursor = hCurrentCursor;
+    wc.hInstance = hInstance;
+    wc.lpfnWndProc = WindowProc;
+    wc.lpszClassName = L"DrawingApp";
+    wc.style = CS_HREDRAW | CS_VREDRAW;
+
+    if (!RegisterClass(&wc)) return -1;
+
+    HWND hwnd = CreateWindow(wc.lpszClassName, L"Advanced Drawing Program", WS_OVERLAPPEDWINDOW | WS_MAXIMIZE,
+        CW_USEDEFAULT, CW_USEDEFAULT, 800, 600, NULL, NULL, hInstance, NULL);
+
+    if (!hwnd) return -1;
+
+    AddMenus(hwnd); // Add menus after window creation
+
+    ShowWindow(hwnd, nCmdShow);
+    UpdateWindow(hwnd);
+
+    MSG msg = { 0 };
+    while (GetMessage(&msg, NULL, 0, 0)) {
+        TranslateMessage(&msg);
+        DispatchMessage(&msg);
+    }
+
+    // Cleanup GDI objects
+    DeleteObject(wc.hbrBackground);
+    if (hbmMem) DeleteObject(hbmMem);
+    if (hdcMem) DeleteDC(hdcMem);
+
+    return 0;
+}
+
+// --- AddMenus ---
+void AddMenus(HWND hwnd) {
+    HMENU hMenubar = CreateMenu();
+    HMENU hFileMenu = CreateMenu();
+    HMENU hOptionsMenu = CreateMenu();
+    HMENU hDrawMenu = CreateMenu();
+    HMENU hAlgoMenu = CreateMenu();
+    HMENU hFillMenu = CreateMenu();
+    HMENU hCurvesMenu = CreateMenu();
+    HMENU hClipMenu = CreateMenu();
+
+    // File Menu
+    AppendMenu(hMenubar, MF_POPUP, (UINT_PTR)hFileMenu, L"&File");
+    AppendMenu(hFileMenu, MF_STRING, FILE_SAVE, L"&Save Drawing");
+    AppendMenu(hFileMenu, MF_STRING, FILE_LOAD, L"&Load Drawing");
+    AppendMenu(hFileMenu, MF_SEPARATOR, 0, NULL);
+    AppendMenu(hFileMenu, MF_STRING, FILE_CLEAR, L"&Clear Screen");
+    AppendMenu(hFileMenu, MF_SEPARATOR, 0, NULL);
+    AppendMenu(hFileMenu, MF_STRING, WM_QUIT, L"E&xit");
+
+    // Options Menu
+    AppendMenu(hMenubar, MF_POPUP, (UINT_PTR)hOptionsMenu, L"&Options");
+    AppendMenu(hOptionsMenu, MF_STRING, COLOR_CHANGE_BACKGROUND, L"Change &Background Color");
+    AppendMenu(hOptionsMenu, MF_STRING, COLOR_CHANGE_SHAPE, L"Select &Drawing Color");
+    AppendMenu(hOptionsMenu, MF_STRING, COLOR_CHANGE_FILL, L"Select &Fill Color");
+
+    HMENU hCursorMenu = CreateMenu();
+    AppendMenu(hOptionsMenu, MF_POPUP, (UINT_PTR)hCursorMenu, L"Change &Mouse Shape");
+    AppendMenu(hCursorMenu, MF_STRING, CURSOR_ARROW, L"Arrow");
+    AppendMenu(hCursorMenu, MF_STRING, CURSOR_HAND, L"Hand");
+    AppendMenu(hCursorMenu, MF_STRING, CURSOR_WAIT, L"Wait");
+    AppendMenu(hCursorMenu, MF_STRING, CURSOR_CROSS, L"Cross");
+    AppendMenu(hCursorMenu, MF_STRING, CURSOR_HELP, L"Help");
+
+    // Draw Menu (Shape selection)
+    AppendMenu(hMenubar, MF_POPUP, (UINT_PTR)hDrawMenu, L"&Draw");
+    AppendMenu(hDrawMenu, MF_STRING, DRAW_MODE_LINE, L"&Line");
+    AppendMenu(hDrawMenu, MF_STRING, DRAW_MODE_CIRCLE, L"&Circle");
+    AppendMenu(hDrawMenu, MF_STRING, DRAW_MODE_ELLIPSE, L"&Ellipse");
+    AppendMenu(hDrawMenu, MF_STRING, DRAW_MODE_POLYGON, L"&Polygon");
+    AppendMenu(hDrawMenu, MF_STRING, DRAW_MODE_CURVE, L"&Curve");
+
+    // Algorithms Menu
+    AppendMenu(hMenubar, MF_POPUP, (UINT_PTR)hAlgoMenu, L"&Algorithms");
+    HMENU hLineAlgoMenu = CreateMenu();
+    AppendMenu(hAlgoMenu, MF_POPUP, (UINT_PTR)hLineAlgoMenu, L"&Line Algorithms");
+    AppendMenu(hLineAlgoMenu, MF_STRING, ALGO_LINE_DDA, L"DDA");
+    AppendMenu(hLineAlgoMenu, MF_STRING, ALGO_LINE_BRESENHAM, L"Bresenham (Midpoint)");
+    AppendMenu(hLineAlgoMenu, MF_STRING, ALGO_LINE_PARAMETRIC, L"Parametric");
+
+    HMENU hCircleAlgoMenu = CreateMenu();
+    AppendMenu(hAlgoMenu, MF_POPUP, (UINT_PTR)hCircleAlgoMenu, L"&Circle Algorithms");
+    AppendMenu(hCircleAlgoMenu, MF_STRING, ALGO_CIRCLE_DIRECT, L"Direct");
+    AppendMenu(hCircleAlgoMenu, MF_STRING, ALGO_CIRCLE_POLAR, L"Polar");
+    AppendMenu(hCircleAlgoMenu, MF_STRING, ALGO_CIRCLE_ITERATIVE_POLAR, L"Iterative Polar");
+    AppendMenu(hCircleAlgoMenu, MF_STRING, ALGO_CIRCLE_MIDPOINT, L"Midpoint");
+    AppendMenu(hCircleAlgoMenu, MF_STRING, ALGO_CIRCLE_MODIFIED_MIDPOINT, L"Modified Midpoint");
+
+    HMENU hEllipseAlgoMenu = CreateMenu();
+    AppendMenu(hAlgoMenu, MF_POPUP, (UINT_PTR)hEllipseAlgoMenu, L"&Ellipse Algorithms");
+    AppendMenu(hEllipseAlgoMenu, MF_STRING, ALGO_ELLIPSE_DIRECT, L"Direct");
+    AppendMenu(hEllipseAlgoMenu, MF_STRING, ALGO_ELLIPSE_POLAR, L"Polar");
+    AppendMenu(hEllipseAlgoMenu, MF_STRING, ALGO_ELLIPSE_MIDPOINT, L"Midpoint");
+
+    // Fill Menu
+    AppendMenu(hMenubar, MF_POPUP, (UINT_PTR)hFillMenu, L"&Fill");
+    AppendMenu(hFillMenu, MF_STRING, DRAW_MODE_FILL, L"Start &Filling Mode"); // Activate general fill mode
+    AppendMenu(hFillMenu, MF_SEPARATOR, 0, NULL);
+
+    HMENU hCircleFillMenu = CreateMenu();
+    AppendMenu(hFillMenu, MF_POPUP, (UINT_PTR)hCircleFillMenu, L"Fill Circle");
+    AppendMenu(hCircleFillMenu, MF_STRING, ALGO_FILL_CIRCLE_LINES, L"With &Lines (Quarter)");
+    AppendMenu(hCircleFillMenu, MF_STRING, ALGO_FILL_CIRCLE_CIRCLES, L"With &Circles (Quarter)");
+
+    AppendMenu(hFillMenu, MF_STRING, ALGO_FILL_SQUARE_HERMITE_VERTICAL, L"Fill &Square with Hermite Curve (Vertical)");
+    AppendMenu(hFillMenu, MF_STRING, ALGO_FILL_RECTANGLE_BEZIER_HORIZONTAL, L"Fill &Rectangle with Bezier Curve (Horizontal)");
+    AppendMenu(hFillMenu, MF_SEPARATOR, 0, NULL);
+
+    AppendMenu(hFillMenu, MF_STRING, ALGO_FILL_CONVEX, L"&Convex Polygon Fill");
+    AppendMenu(hFillMenu, MF_STRING, ALGO_FILL_NONCONVEX, L"&Non-Convex Polygon Fill");
+    AppendMenu(hFillMenu, MF_SEPARATOR, 0, NULL);
+
+    HMENU hFloodFillMenu = CreateMenu();
+    AppendMenu(hFillMenu, MF_POPUP, (UINT_PTR)hFloodFillMenu, L"&Flood Fill");
+    AppendMenu(hFloodFillMenu, MF_STRING, ALGO_FLOOD_FILL_RECURSIVE, L"&Recursive Flood Fill");
+    AppendMenu(hFloodFillMenu, MF_STRING, ALGO_FLOOD_FILL_NON_RECURSIVE, L"&Non-Recursive Flood Fill");
+
+    // Curves Menu
+    AppendMenu(hMenubar, MF_POPUP, (UINT_PTR)hCurvesMenu, L"&Curves");
+    AppendMenu(hCurvesMenu, MF_STRING, ALGO_CARDINAL_SPLINE, L"&Cardinal Spline");
+    AppendMenu(hCurvesMenu, MF_STRING, ALGO_BEZIER_CURVE, L"&Bezier Curve");
+
+    // Clipping Menu
+    AppendMenu(hMenubar, MF_POPUP, (UINT_PTR)hClipMenu, L"&Clip");
+    AppendMenu(hClipMenu, MF_STRING, DRAW_MODE_CLIP, L"Start &Clipping Mode");
+    AppendMenu(hClipMenu, MF_SEPARATOR, 0, NULL);
+
+    HMENU hClipRectMenu = CreateMenu();
+    AppendMenu(hClipMenu, MF_POPUP, (UINT_PTR)hClipRectMenu, L"Rectangle Clipping");
+    AppendMenu(hClipRectMenu, MF_STRING, ALGO_CLIP_RECTANGLE_POINT, L"Clip &Point");
+    AppendMenu(hClipRectMenu, MF_STRING, ALGO_CLIP_RECTANGLE_LINE, L"Clip &Line");
+    AppendMenu(hClipRectMenu, MF_STRING, ALGO_CLIP_RECTANGLE_POLYGON, L"Clip &Polygon");
+
+    HMENU hClipSquareMenu = CreateMenu();
+    AppendMenu(hClipMenu, MF_POPUP, (UINT_PTR)hClipSquareMenu, L"Square Clipping");
+    AppendMenu(hClipSquareMenu, MF_STRING, ALGO_CLIP_SQUARE_POINT, L"Clip Point");
+    AppendMenu(hClipSquareMenu, MF_STRING, ALGO_CLIP_SQUARE_LINE, L"Clip Line");
+
+    SetMenu(hwnd, hMenubar);
+}
+
+// Dialog box procedure for quarter input
+INT_PTR CALLBACK QuarterDialogProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam) {
+    switch (message) {
+    case WM_INITDIALOG:
+        // Set default value in the edit control
+        SetDlgItemInt(hDlg, IDC_QUARTER_EDIT, quarterInput, FALSE);
+        return (INT_PTR)TRUE;
+    case WM_COMMAND:
+        switch (LOWORD(wParam)) {
+        case IDOK:
+            quarterInput = GetDlgItemInt(hDlg, IDC_QUARTER_EDIT, NULL, FALSE);
+            if (quarterInput < 1 || quarterInput > 4) {
+                MessageBox(hDlg, L"Please enter a quarter between 1 and 4.", L"Invalid Input", MB_ICONWARNING);
+                return (INT_PTR)TRUE;
+            }
+            EndDialog(hDlg, IDOK);
+            return (INT_PTR)TRUE;
+        case IDCANCEL:
+            EndDialog(hDlg, IDCANCEL);
+            return (INT_PTR)TRUE;
+        }
+        break;
+    }
+    return (INT_PTR)FALSE;
+}
+
+// --- WindowProc (Main Message Handler) ---
+LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    HDC hdc;
+    PAINTSTRUCT ps;
+    CHOOSECOLOR cc;
+    COLORREF acrCustColors[16]; // Custom colors for dialog
+
+    switch (msg) {
+    case WM_CREATE: {
+        // Initialize double buffering
+        hdc = GetDC(hwnd);
+        GetClientRect(hwnd, &clientRect);
+        hdcMem = CreateCompatibleDC(hdc);
+        hbmMem = CreateCompatibleBitmap(hdc, clientRect.right, clientRect.bottom);
+        hbmOld = (HBITMAP)SelectObject(hdcMem, hbmMem);
+        ReleaseDC(hwnd, hdc);
+        OutputDebugString(L"WM_CREATE: Double buffering initialized.\n");
+        // Fill memory DC with background color
+        HBRUSH hBrush = CreateSolidBrush(currentBackgroundColor);
+        FillRect(hdcMem, &clientRect, hBrush);
+        DeleteObject(hBrush);
+    } break;
+
+    case WM_SIZE: {
+        GetClientRect(hwnd, &clientRect);
+        // Recreate memory bitmap to match new window size
+        if (hbmMem) DeleteObject(hbmMem);
+        if (hdcMem) SelectObject(hdcMem, hbmOld); // Restore old bitmap before deleting DC
+        if (hdcMem) DeleteDC(hdcMem);
+
+        hdc = GetDC(hwnd);
+        hdcMem = CreateCompatibleDC(hdc);
+        hbmMem = CreateCompatibleBitmap(hdc, clientRect.right, clientRect.bottom);
+        hbmOld = (HBITMAP)SelectObject(hdcMem, hbmMem);
+        ReleaseDC(hwnd, hdc);
+
+        // Redraw everything on resize
+        InvalidateRect(hwnd, NULL, TRUE);
+        OutputDebugString(L"WM_SIZE: Window resized, redraw initiated.\n");
+    } break;
+
+    case WM_COMMAND: {
+        int wmId = LOWORD(wParam);
+        int wmEvent = HIWORD(wParam);
+
+        // Reset multi-point drawing mode if a new single-draw mode is selected
+        if (wmId >= DRAW_MODE_LINE && wmId <= DRAW_MODE_CLIP && wmId != DRAW_MODE_POLYGON && wmId != DRAW_MODE_CURVE) {
+            drawingPolygonOrCurve = false;
+            currentPoints.clear();
+        }
+
+        switch (wmId) {
+        case FILE_SAVE: {
+            std::ofstream outFile("drawing.txt");
+            if (outFile.is_open()) {
+                outFile << "BG_COLOR " << GetRValue(currentBackgroundColor) << " " << GetGValue(currentBackgroundColor) << " " << GetBValue(currentBackgroundColor) << "\n";
+                for (const auto& shape : drawnShapes) {
+                    outFile << "SHAPE " << shape.first << " " << GetRValue(currentShapeColor) << " " << GetGValue(currentShapeColor) << " " << GetBValue(currentShapeColor);
+                    for (const auto& p : shape.second) {
+                        outFile << " " << p.x << " " << p.y;
+                    }
+                    outFile << "\n";
+                }
+                outFile.close();
+                MessageBox(hwnd, L"Drawing saved successfully!", L"Save", MB_OK | MB_ICONINFORMATION);
+                OutputDebugString(L"FILE_SAVE: Drawing saved.\n");
+            }
+            else {
+                MessageBox(hwnd, L"Failed to save drawing!", L"Error", MB_OK | MB_ICONERROR);
+                OutputDebugString(L"FILE_SAVE: Failed to save drawing.\n");
+            }
+        } break;
+
+        case FILE_LOAD: {
+            std::ifstream inFile("drawing.txt");
+            if (inFile.is_open()) {
+                drawnShapes.clear(); // Clear existing shapes
+                std::string line;
+                while (std::getline(inFile, line)) {
+                    std::stringstream ss(line); // Corrected: std::stringstream requires <sstream>
+                    std::string typeStr;
+                    ss >> typeStr;
+                    if (typeStr == "BG_COLOR") {
+                        int r, g, b;
+                        ss >> r >> g >> b;
+                        currentBackgroundColor = RGB(r, g, b);
+                        SetClassLongPtr(hwnd, GCLP_HBRBACKGROUND, (LONG_PTR)CreateSolidBrush(currentBackgroundColor));
+                        InvalidateRect(hwnd, NULL, TRUE);
+                        OutputDebugString(L"FILE_LOAD: Background color loaded.\n");
+                    }
+                    else if (typeStr == "SHAPE") {
+                        int shapeTypeInt, r, g, b;
+                        ss >> shapeTypeInt >> r >> g >> b;
+                        Shape shapeType = static_cast<Shape>(shapeTypeInt);
+                        // The color loaded here is not currently used to redraw shapes,
+                        // as shapes are redrawn using the global `currentShapeColor`.
+                        // To persist individual shape colors, the `drawnShapes` structure
+                        // would need to store the color along with the points.
+                        // For simplicity, I'm maintaining the original structure.
+
+                        std::vector<POINT> points;
+                        int x, y;
+                        while (ss >> x >> y) { // This will now work with <sstream>
+                            points.push_back({ x, y });
+                        }
+                        drawnShapes.push_back({ shapeType, points });
+                    }
+                }
+                inFile.close();
+                InvalidateRect(hwnd, NULL, TRUE); // Redraw
+                MessageBox(hwnd, L"Drawing loaded successfully!", L"Load", MB_OK | MB_ICONINFORMATION);
+                OutputDebugString(L"FILE_LOAD: Drawing loaded.\n");
+            }
+            else {
+                MessageBox(hwnd, L"Failed to load drawing! File not found or empty.", L"Error", MB_OK | MB_ICONERROR);
+                OutputDebugString(L"FILE_LOAD: Failed to load drawing.\n");
+            }
+        } break;
+
+        case FILE_CLEAR:
+            drawnShapes.clear();
+            currentPoints.clear();
+            drawingPolygonOrCurve = false;
+            currentClipRect = { 0,0,0,0 };
+            clipWindowDefined = false;
+            InvalidateRect(hwnd, NULL, TRUE); // Clear screen
+            OutputDebugString(L"FILE_CLEAR: Screen cleared.\n");
+            break;
+
+        case COLOR_CHANGE_BACKGROUND:
+            ZeroMemory(&cc, sizeof(cc));
+            cc.lStructSize = sizeof(cc);
+            cc.hwndOwner = hwnd;
+            cc.lpCustColors = (LPDWORD)acrCustColors;
+            cc.rgbResult = currentBackgroundColor;
+            cc.Flags = CC_FULLOPEN | CC_RGBINIT;
+            if (ChooseColor(&cc)) {
+                currentBackgroundColor = cc.rgbResult;
+                SetClassLongPtr(hwnd, GCLP_HBRBACKGROUND, (LONG_PTR)CreateSolidBrush(currentBackgroundColor));
+                InvalidateRect(hwnd, NULL, TRUE);
+                OutputDebugString(L"COLOR_CHANGE_BACKGROUND: Background color changed.\n");
+            }
+            break;
+
+        case COLOR_CHANGE_SHAPE:
+            ZeroMemory(&cc, sizeof(cc));
+            cc.lStructSize = sizeof(cc);
+            cc.hwndOwner = hwnd;
+            cc.lpCustColors = (LPDWORD)acrCustColors;
+            cc.rgbResult = currentShapeColor;
+            cc.Flags = CC_FULLOPEN | CC_RGBINIT;
+            if (ChooseColor(&cc)) {
+                currentShapeColor = cc.rgbResult;
+                OutputDebugString(L"COLOR_CHANGE_SHAPE: Shape color changed.\n");
+            }
+            break;
+
+        case COLOR_CHANGE_FILL:
+            ZeroMemory(&cc, sizeof(cc));
+            cc.lStructSize = sizeof(cc);
+            cc.hwndOwner = hwnd;
+            cc.lpCustColors = (LPDWORD)acrCustColors;
+            cc.rgbResult = currentFillColor;
+            cc.Flags = CC_FULLOPEN | CC_RGBINIT;
+            if (ChooseColor(&cc)) {
+                currentFillColor = cc.rgbResult;
+                OutputDebugString(L"COLOR_CHANGE_FILL: Fill color changed.\n");
+            }
+            break;
+
+        case CURSOR_ARROW: SetCursor(hCurrentCursor = LoadCursor(NULL, IDC_ARROW)); OutputDebugString(L"CURSOR_ARROW: Cursor changed.\n"); break;
+        case CURSOR_HAND: SetCursor(hCurrentCursor = LoadCursor(NULL, IDC_HAND)); OutputDebugString(L"CURSOR_HAND: Cursor changed.\n"); break;
+        case CURSOR_WAIT: SetCursor(hCurrentCursor = LoadCursor(NULL, IDC_WAIT)); OutputDebugString(L"CURSOR_WAIT: Cursor changed.\n"); break;
+        case CURSOR_CROSS: SetCursor(hCurrentCursor = LoadCursor(NULL, IDC_CROSS)); OutputDebugString(L"CURSOR_CROSS: Cursor changed.\n"); break;
+        case CURSOR_HELP: SetCursor(hCurrentCursor = LoadCursor(NULL, IDC_HELP)); OutputDebugString(L"CURSOR_HELP: Cursor changed.\n"); break;
+
+            // Set drawing modes
+        case DRAW_MODE_LINE: currentActiveShapeType = SHAPE_LINE; currentDrawingAlgorithm = ALGO_NONE; OutputDebugString(L"DRAW_MODE: Line.\n"); break;
+        case DRAW_MODE_CIRCLE: currentActiveShapeType = SHAPE_CIRCLE; currentDrawingAlgorithm = ALGO_NONE; OutputDebugString(L"DRAW_MODE: Circle.\n"); break;
+        case DRAW_MODE_ELLIPSE: currentActiveShapeType = SHAPE_ELLIPSE; currentDrawingAlgorithm = ALGO_NONE; OutputDebugString(L"DRAW_MODE: Ellipse.\n"); break;
+        case DRAW_MODE_POLYGON: currentActiveShapeType = SHAPE_POLYGON; drawingPolygonOrCurve = true; currentPoints.clear(); OutputDebugString(L"DRAW_MODE: Polygon.\n"); break;
+        case DRAW_MODE_CURVE: currentActiveShapeType = SHAPE_CURVE; drawingPolygonOrCurve = true; currentPoints.clear(); OutputDebugString(L"DRAW_MODE: Curve.\n"); break;
+        case DRAW_MODE_CLIP: currentActiveShapeType = SHAPE_CLIP_RECT; OutputDebugString(L"DRAW_MODE: Clipping Window.\n"); break;
+        case DRAW_MODE_FILL: currentActiveShapeType = SHAPE_FLOOD_FILL; OutputDebugString(L"DRAW_MODE: Flood Fill.\n"); break;
+
+            // Set drawing algorithms
+        case ALGO_LINE_DDA: currentDrawingAlgorithm = ALGO_LINE_DDA; OutputDebugString(L"ALGO: Line DDA.\n"); break;
+        case ALGO_LINE_BRESENHAM: currentDrawingAlgorithm = ALGO_LINE_BRESENHAM; OutputDebugString(L"ALGO: Line Bresenham.\n"); break;
+        case ALGO_LINE_PARAMETRIC: currentDrawingAlgorithm = ALGO_LINE_PARAMETRIC; OutputDebugString(L"ALGO: Line Parametric.\n"); break;
+
+        case ALGO_CIRCLE_DIRECT: currentDrawingAlgorithm = ALGO_CIRCLE_DIRECT; OutputDebugString(L"ALGO: Circle Direct.\n"); break;
+        case ALGO_CIRCLE_POLAR: currentDrawingAlgorithm = ALGO_CIRCLE_POLAR; OutputDebugString(L"ALGO: Circle Polar.\n"); break;
+        case ALGO_CIRCLE_ITERATIVE_POLAR: currentDrawingAlgorithm = ALGO_CIRCLE_ITERATIVE_POLAR; OutputDebugString(L"ALGO: Circle Iterative Polar.\n"); break;
+        case ALGO_CIRCLE_MIDPOINT: currentDrawingAlgorithm = ALGO_CIRCLE_MIDPOINT; OutputDebugString(L"ALGO: Circle Midpoint.\n"); break;
+        case ALGO_CIRCLE_MODIFIED_MIDPOINT: currentDrawingAlgorithm = ALGO_CIRCLE_MODIFIED_MIDPOINT; OutputDebugString(L"ALGO: Circle Modified Midpoint.\n"); break;
+
+        case ALGO_ELLIPSE_DIRECT: currentDrawingAlgorithm = ALGO_ELLIPSE_DIRECT; OutputDebugString(L"ALGO: Ellipse Direct.\n"); break;
+        case ALGO_ELLIPSE_POLAR: currentDrawingAlgorithm = ALGO_ELLIPSE_POLAR; OutputDebugString(L"ALGO: Ellipse Polar.\n"); break;
+        case ALGO_ELLIPSE_MIDPOINT: currentDrawingAlgorithm = ALGO_ELLIPSE_MIDPOINT; OutputDebugString(L"ALGO: Ellipse Midpoint.\n"); break;
+
+            // Set filling algorithms
+        case ALGO_FILL_CIRCLE_LINES: currentFillingAlgorithm = ALGO_FILL_CIRCLE_LINES; OutputDebugString(L"FILL_ALGO: Circle Lines.\n"); break;
+        case ALGO_FILL_CIRCLE_CIRCLES: currentFillingAlgorithm = ALGO_FILL_CIRCLE_CIRCLES; OutputDebugString(L"FILL_ALGO: Circle Circles.\n"); break;
+        case ALGO_FILL_SQUARE_HERMITE_VERTICAL: currentFillingAlgorithm = ALGO_FILL_SQUARE_HERMITE_VERTICAL; OutputDebugString(L"FILL_ALGO: Square Hermite.\n"); break;
+        case ALGO_FILL_RECTANGLE_BEZIER_HORIZONTAL: currentFillingAlgorithm = ALGO_FILL_RECTANGLE_BEZIER_HORIZONTAL; OutputDebugString(L"FILL_ALGO: Rectangle Bezier.\n"); break;
+        case ALGO_FILL_CONVEX: currentFillingAlgorithm = ALGO_FILL_CONVEX; OutputDebugString(L"FILL_ALGO: Convex.\n"); break;
+        case ALGO_FILL_NONCONVEX: currentFillingAlgorithm = ALGO_FILL_NONCONVEX; OutputDebugString(L"FILL_ALGO: Non-Convex.\n"); break;
+        case ALGO_FLOOD_FILL_RECURSIVE: currentFillingAlgorithm = ALGO_FLOOD_FILL_RECURSIVE; OutputDebugString(L"FILL_ALGO: Recursive Flood Fill.\n"); break;
+        case ALGO_FLOOD_FILL_NON_RECURSIVE: currentFillingAlgorithm = ALGO_FLOOD_FILL_NON_RECURSIVE; OutputDebugString(L"FILL_ALGO: Non-Recursive Flood Fill.\n"); break;
+
+            // Set curve algorithms
+        case ALGO_CARDINAL_SPLINE: currentDrawingAlgorithm = ALGO_CARDINAL_SPLINE; OutputDebugString(L"CURVE_ALGO: Cardinal Spline.\n"); break;
+        case ALGO_BEZIER_CURVE: currentDrawingAlgorithm = ALGO_BEZIER_CURVE; OutputDebugString(L"CURVE_ALGO: Bezier.\n"); break;
+
+            // Set clipping algorithms
+        case ALGO_CLIP_RECTANGLE_POINT: currentClippingAlgorithm = ALGO_CLIP_RECTANGLE_POINT; OutputDebugString(L"CLIP_ALGO: Rect Point.\n"); break;
+        case ALGO_CLIP_RECTANGLE_LINE: currentClippingAlgorithm = ALGO_CLIP_RECTANGLE_LINE; OutputDebugString(L"CLIP_ALGO: Rect Line.\n"); break;
+        case ALGO_CLIP_RECTANGLE_POLYGON: currentClippingAlgorithm = ALGO_CLIP_RECTANGLE_POLYGON; OutputDebugString(L"CLIP_ALGO: Rect Polygon.\n"); break;
+        case ALGO_CLIP_SQUARE_POINT: currentClippingAlgorithm = ALGO_CLIP_SQUARE_POINT; OutputDebugString(L"CLIP_ALGO: Square Point.\n"); break;
+        case ALGO_CLIP_SQUARE_LINE: currentClippingAlgorithm = ALGO_CLIP_SQUARE_LINE; OutputDebugString(L"CLIP_ALGO: Square Line.\n"); break;
+        }
+    } break;
+
+    case WM_LBUTTONDOWN: {
+        startPoint.x = LOWORD(lParam);
+        startPoint.y = HIWORD(lParam);
+        endPoint = startPoint;
+        drawingActive = true;
+
+        if (currentActiveShapeType == SHAPE_POLYGON || currentActiveShapeType == SHAPE_CURVE) {
+            currentPoints.push_back(startPoint);
+            OutputDebugString(L"WM_LBUTTONDOWN: Point added for multi-point shape.\n");
+        }
+        else if (currentActiveShapeType == SHAPE_FLOOD_FILL) {
+            // Get target color at click point
+            COLORREF targetColor = GetPixel(hdcMem, startPoint.x, startPoint.y);
+            if (targetColor == CLR_INVALID) { // Invalid pixel color
+                MessageBox(hwnd, L"Cannot read pixel color. Try clicking within a drawn shape.", L"Fill Error", MB_ICONWARNING);
+                OutputDebugString(L"WM_LBUTTONDOWN: Cannot read pixel color for flood fill.\n");
+            }
+            else if (targetColor == currentFillColor) {
+                OutputDebugString(L"WM_LBUTTONDOWN: Already filled with current fill color.\n");
+            }
+            else {
+                if (currentFillingAlgorithm == ALGO_FLOOD_FILL_RECURSIVE) {
+                    OutputDebugString(L"WM_LBUTTONDOWN: Initiating Recursive Flood Fill.\n");
+                    FloodFillRecursive(hdcMem, startPoint.x, startPoint.y, currentFillColor, targetColor);
+                }
+                else if (currentFillingAlgorithm == ALGO_FLOOD_FILL_NON_RECURSIVE) {
+                    OutputDebugString(L"WM_LBUTTONDOWN: Initiating Non-Recursive Flood Fill.\n");
+                    FloodFillNRecursive(hdcMem, startPoint.x, startPoint.y, targetColor, currentFillColor);
+                }
+                else {
+                    // For other fills, the user must select a specific fill method first.
+                    MessageBox(hwnd, L"Please select a specific filling algorithm from 'Fill' menu before clicking.", L"Filling Mode", MB_ICONINFORMATION);
+                    OutputDebugString(L"WM_LBUTTONDOWN: No specific fill algorithm selected for click.\n");
+                }
+                InvalidateRect(hwnd, NULL, FALSE); // Redraw
+            }
+            drawingActive = false; // Filling is a single click action
+        }
+        else if (currentActiveShapeType == SHAPE_FILLED_CIRCLE_LINES || currentActiveShapeType == SHAPE_FILLED_CIRCLE_CIRCLES) {
+            // For circle filling, user clicks center and drags for radius.
+            // The quarter input will be handled on mouse up via dialog.
+            OutputDebugString(L"WM_LBUTTONDOWN: Starting filled quarter circle draw.\n");
+        }
+    } break;
+
+    case WM_MOUSEMOVE: {
+        if (drawingActive) {
+            endPoint.x = LOWORD(lParam);
+            endPoint.y = HIWORD(lParam);
+            InvalidateRect(hwnd, NULL, FALSE); // Invalidate to show temporary shape
+        }
+        SetCursor(hCurrentCursor); // Ensure cursor is always set
+    } break;
+
+    case WM_LBUTTONUP: {
+        if (drawingActive) {
+            endPoint.x = LOWORD(lParam);
+            endPoint.y = HIWORD(lParam);
+
+            if (currentActiveShapeType == SHAPE_LINE) {
+                OutputDebugString(L"WM_LBUTTONUP: Drawing Line.\n");
+                drawnShapes.push_back({ SHAPE_LINE, {startPoint, endPoint} });
+            }
+            else if (currentActiveShapeType == SHAPE_CIRCLE) {
+                OutputDebugString(L"WM_LBUTTONUP: Drawing Circle.\n");
+                drawnShapes.push_back({ SHAPE_CIRCLE, {startPoint, endPoint} }); // startPoint=center, endPoint defines radius
+            }
+            else if (currentActiveShapeType == SHAPE_ELLIPSE) {
+                OutputDebugString(L"WM_LBUTTONUP: Drawing Ellipse.\n");
+                drawnShapes.push_back({ SHAPE_ELLIPSE, {startPoint, endPoint} }); // startPoint=center, endPoint defines radii
+            }
+            else if (currentActiveShapeType == SHAPE_CLIP_RECT) {
+                currentClipRect = { min(startPoint.x, endPoint.x), min(startPoint.y, endPoint.y),
+                                   max(startPoint.x, endPoint.x), max(startPoint.y, endPoint.y) };
+                if (currentClippingAlgorithm == ALGO_CLIP_SQUARE_POINT || currentClippingAlgorithm == ALGO_CLIP_SQUARE_LINE) {
+                    // Make it a square
+                    int size = max(currentClipRect.right - currentClipRect.left, currentClipRect.bottom - currentClipRect.top);
+                    currentClipRect.right = currentClipRect.left + size;
+                    currentClipRect.bottom = currentClipRect.top + size;
+                }
+                clipWindowDefined = true;
+                OutputDebugString(L"WM_LBUTTONUP: Clipping Window defined.\n");
+
+                // Apply clipping to existing shapes
+                if (currentClippingAlgorithm != ALGO_NONE) {
+                    std::vector<std::pair<Shape, std::vector<POINT>>> clippedShapesTemp;
+                    for (const auto& shape : drawnShapes) {
+                        if (shape.first == SHAPE_LINE && (currentClippingAlgorithm == ALGO_CLIP_RECTANGLE_LINE || currentClippingAlgorithm == ALGO_CLIP_SQUARE_LINE)) {
+                            POINT p1 = shape.second[0];
+                            POINT p2 = shape.second[1];
+                            if (ClipLineCohenSutherland(hdcMem, p1, p2, currentClipRect, currentShapeColor)) {
+                                clippedShapesTemp.push_back({ SHAPE_LINE, {p1, p2} });
+                            }
+                        }
+                        else if (shape.first == SHAPE_POLYGON && currentClippingAlgorithm == ALGO_CLIP_RECTANGLE_POLYGON) {
+                            // For polygon clipping, the Sutherland-Hodgman algorithm redraws directly.
+                            // We'll just trigger a redraw to apply it. The original polygon is effectively replaced visually.
+                            // A more robust system would store the clipped polygon points.
+                            OutputDebugString(L"WM_LBUTTONUP: Polygon clipping applied. Redraw initiated.\n");
+                            // We don't add to clippedShapesTemp here as ClipPolygonSutherlandHodgman draws directly.
+                            // If we wanted to store, it would look like:
+                            // std::vector<POINT> clippedPolyPoints;
+                            // ClipPolygonSutherlandHodgman(hdcMem, shape.second, currentClipRect, currentShapeColor, &clippedPolyPoints);
+                            // if (!clippedPolyPoints.empty()) {
+                            //     clippedShapesTemp.push_back({SHAPE_POLYGON, clippedPolyPoints});
+                            // }
+                        }
+                        else if (shape.first == SHAPE_LINE && (currentClippingAlgorithm == ALGO_CLIP_RECTANGLE_POINT || currentClippingAlgorithm == ALGO_CLIP_SQUARE_POINT)) {
+                            // For point clipping on a line, it's more conceptual.
+                            // If a line is drawn, its points are kept. If specific points are clipped, they are removed.
+                            // This part is more conceptual in this general framework.
+                            // We just pass the original line as points don't form a "shape" themselves to be removed.
+                            clippedShapesTemp.push_back(shape); // Keep original for now
+                        }
+                        else {
+                            clippedShapesTemp.push_back(shape); // Keep other shapes
+                        }
+                    }
+                    drawnShapes = clippedShapesTemp;
+                }
+                // Add the clipping window itself to drawnShapes so it persists
+                drawnShapes.push_back({ SHAPE_CLIP_RECT, {{currentClipRect.left, currentClipRect.top}, {currentClipRect.right, currentClipRect.bottom}} });
+            }
+            else if (currentActiveShapeType == SHAPE_FILLED_CIRCLE_LINES || currentActiveShapeType == SHAPE_FILLED_CIRCLE_CIRCLES) {
+                // Ask for quarter input using the dialog
+                if (DialogBox(GetModuleHandle(NULL), MAKEINTRESOURCE(IDD_QUARTER_INPUT), hwnd, QuarterDialogProc) == IDOK) {
+                    int radius = static_cast<int>(sqrt(pow(endPoint.x - startPoint.x, 2) + pow(endPoint.y - startPoint.y, 2)));
+                    if (currentActiveShapeType == SHAPE_FILLED_CIRCLE_LINES) {
+                        // Corrected: Wrap radius and quarterInput in a POINT
+                        drawnShapes.push_back({ SHAPE_FILLED_CIRCLE_LINES, {startPoint, endPoint, POINT{radius, quarterInput}} });
+                        OutputDebugString(L"WM_LBUTTONUP: Drawing Filled Quarter Circle (Lines).\n");
+                    }
+                    else { // SHAPE_FILLED_CIRCLE_CIRCLES
+                        // Corrected: Wrap radius and quarterInput in a POINT
+                        drawnShapes.push_back({ SHAPE_FILLED_CIRCLE_CIRCLES, {startPoint, endPoint, POINT{radius, quarterInput}} });
+                        OutputDebugString(L"WM_LBUTTONUP: Drawing Filled Quarter Circle (Circles).\n");
+                    }
+                }
+                else {
+                    OutputDebugString(L"WM_LBUTTONUP: Quarter input cancelled, not drawing filled circle.\n");
+                }
+            }
+            else if (currentActiveShapeType == SHAPE_FILLED_SQUARE_HERMITE) {
+                int size = max(abs(endPoint.x - startPoint.x), abs(endPoint.y - startPoint.y));
+                POINT center = { startPoint.x + (endPoint.x - startPoint.x) / 2, startPoint.y + (endPoint.y - startPoint.y) / 2 };
+                drawnShapes.push_back({ SHAPE_FILLED_SQUARE_HERMITE, {center, {size,0}} }); // Store center and size
+                OutputDebugString(L"WM_LBUTTONUP: Drawing Filled Square (Hermite).\n");
+            }
+            else if (currentActiveShapeType == SHAPE_FILLED_RECTANGLE_BEZIER) {
+                // For animated Bezier fill, we set up timer and start points
+                bezierFillP0 = { startPoint.x, startPoint.y };
+                bezierFillP1 = { startPoint.x + (endPoint.x - startPoint.x) / 3, startPoint.y + (endPoint.y - startPoint.y) / 3 };
+                bezierFillP2 = { startPoint.x + 2 * (endPoint.x - startPoint.x) / 3, startPoint.y + 2 * (endPoint.y - startPoint.y) / 3 };
+                bezierFillP3 = { endPoint.x, endPoint.y };
+                bezierFillTargetRect = { min(startPoint.x, endPoint.x), min(startPoint.y, endPoint.y), max(startPoint.x, endPoint.x), max(startPoint.y, endPoint.y) };
+
+                SetTimer(hwnd, TIMER_ID_BEZIER_FILL, TIMER_INTERVAL_BEZIER_FILL, NULL);
+                currentBezierFillStep = 0;
+                OutputDebugString(L"WM_LBUTTONUP: Starting Bezier Fill Animation.\n");
+            }
+
+            drawingActive = false; // Reset drawing flag for single-draw shapes
+        }
+        InvalidateRect(hwnd, NULL, TRUE); // Request full redraw
+    } break;
+
+    case WM_RBUTTONDOWN: {
+        if (drawingPolygonOrCurve) {
+            if (currentPoints.size() >= (currentActiveShapeType == SHAPE_POLYGON ? 3 : 2)) {
+                // Finalize polygon or curve
+                drawnShapes.push_back({ currentActiveShapeType, currentPoints });
+                OutputDebugString(L"WM_RBUTTONDOWN: Polygon/Curve finalized.\n");
+            }
+            else {
+                OutputDebugString(L"WM_RBUTTONDOWN: Not enough points for polygon/curve.\n");
+            }
+            currentPoints.clear();
+            drawingPolygonOrCurve = false;
+            InvalidateRect(hwnd, NULL, TRUE);
+        }
+    } break;
+
+    case WM_PAINT: {
+        hdc = BeginPaint(hwnd, &ps);
+
+        // 1. Clear memory DC with background color
+        HBRUSH hBrush = CreateSolidBrush(currentBackgroundColor);
+        FillRect(hdcMem, &clientRect, hBrush);
+        DeleteObject(hBrush);
+        HPEN hPen = CreatePen(PS_SOLID, 1, currentShapeColor);
+        HPEN hOldPen = (HPEN)SelectObject(hdcMem, hPen);
+
+        // 2. Draw all stored shapes to memory DC
+        for (const auto& shapePair : drawnShapes) {
+            Shape shapeType = shapePair.first;
+            const std::vector<POINT>& points = shapePair.second;
+
+            if (points.empty()) continue;
+
+            // Set pen color for stored shapes (use their original color if stored, otherwise currentShapeColor)
+            // Note: Current implementation uses currentShapeColor for redrawing stored shapes.
+            // To persist individual shape colors, the pair would need to store COLORREF too.
+            SelectObject(hdcMem, CreatePen(PS_SOLID, 1, currentShapeColor));
+
+            if (shapeType == SHAPE_LINE) {
+                if (currentDrawingAlgorithm == ALGO_LINE_DDA) DrawDDALine(hdcMem, points[0], points[1], currentShapeColor);
+                else if (currentDrawingAlgorithm == ALGO_LINE_BRESENHAM) DrawMidpointLine(hdcMem, points[0], points[1], currentShapeColor);
+                else if (currentDrawingAlgorithm == ALGO_LINE_PARAMETRIC) DrawParametricLine(hdcMem, points[0], points[1], currentShapeColor);
+                else DrawLine(hdcMem, points[0].x, points[0].y, points[1].x, points[1].y, currentShapeColor); // Default if no specific algo chosen
+            }
+            else if (shapeType == SHAPE_CIRCLE) {
+                int radius = static_cast<int>(sqrt(pow(points[1].x - points[0].x, 2) + pow(points[1].y - points[0].y, 2)));
+                if (currentDrawingAlgorithm == ALGO_CIRCLE_DIRECT) DrawDirectCircle(hdcMem, points[0].x, points[0].y, radius, currentShapeColor);
+                else if (currentDrawingAlgorithm == ALGO_CIRCLE_POLAR) DrawPolarCircle(hdcMem, points[0].x, points[0].y, radius, currentShapeColor);
+                else if (currentDrawingAlgorithm == ALGO_CIRCLE_ITERATIVE_POLAR) DrawIterativePolarCircle(hdcMem, points[0].x, points[0].y, radius, currentShapeColor);
+                else if (currentDrawingAlgorithm == ALGO_CIRCLE_MIDPOINT) DrawMidpointCircle(hdcMem, points[0].x, points[0].y, radius, currentShapeColor);
+                else if (currentDrawingAlgorithm == ALGO_CIRCLE_MODIFIED_MIDPOINT) DrawModifiedMidpointCircle(hdcMem, points[0].x, points[0].y, radius, currentShapeColor);
+                else DrawMidpointCircle(hdcMem, points[0].x, points[0].y, radius, currentShapeColor); // Default
+            }
+            else if (shapeType == SHAPE_ELLIPSE) {
+                int rx = abs(points[1].x - points[0].x);
+                int ry = abs(points[1].y - points[0].y);
+                if (currentDrawingAlgorithm == ALGO_ELLIPSE_DIRECT) DrawDirectEllipse(hdcMem, points[0].x, points[0].y, rx, ry, currentShapeColor);
+                else if (currentDrawingAlgorithm == ALGO_ELLIPSE_POLAR) DrawPolarEllipse(hdcMem, points[0].x, points[0].y, rx, ry, currentShapeColor);
+                else if (currentDrawingAlgorithm == ALGO_ELLIPSE_MIDPOINT) DrawMidpointEllipse(hdcMem, points[0].x, points[0].y, rx, ry, currentShapeColor);
+                else DrawMidpointEllipse(hdcMem, points[0].x, points[0].y, rx, ry, currentShapeColor); // Default
+            }
+            else if (shapeType == SHAPE_POLYGON) {
+                // For polygon, draw outline and then fill if applicable
+                if (currentFillingAlgorithm == ALGO_FILL_CONVEX || currentFillingAlgorithm == ALGO_FILL_NONCONVEX) {
+                    ScanlineFill(hdcMem, points, currentFillColor);
+                }
+                MoveToEx(hdcMem, points[0].x, points[0].y, NULL);
+                for (size_t i = 1; i < points.size(); ++i) LineTo(hdcMem, points[i].x, points[i].y);
+                LineTo(hdcMem, points[0].x, points[0].y); // Close the polygon
+            }
+            else if (shapeType == SHAPE_CURVE) {
+                if (points.size() >= 4) { // Cubic Bezier or Cardinal Spline need 4 points
+                    if (currentDrawingAlgorithm == ALGO_BEZIER_CURVE) {
+                        DrawBezierCurve(hdcMem, points[0], points[1], points[2], points[3], currentShapeColor);
+                    }
+                    else if (currentDrawingAlgorithm == ALGO_CARDINAL_SPLINE) {
+                        DrawCardinalSpline(hdcMem, points, 0.5, currentShapeColor); // Default tension 0.5
+                    }
+                    else {
+                        // Default to Bezier if no specific curve algo selected
+                        DrawBezierCurve(hdcMem, points[0], points[1], points[2], points[3], currentShapeColor);
+                    }
+                }
+                else { // For fewer than 4 points, just draw lines connecting them
+                    MoveToEx(hdcMem, points[0].x, points[0].y, NULL);
+                    for (size_t i = 1; i < points.size(); ++i) LineTo(hdcMem, points[i].x, points[i].y);
+                }
+            }
+            else if (shapeType == SHAPE_CLIP_RECT) {
+                // Draw the clipping window itself
+                RECT tempClipRect = { points[0].x, points[0].y, points[1].x, points[1].y };
+                DrawClippingWindow(hdcMem, tempClipRect);
+            }
+            else if (shapeType == SHAPE_FILLED_CIRCLE_LINES) {
+                int r = points[2].x; // Radius stored in x-component of 3rd point
+                int q = points[2].y; // Quarter stored in y-component of 3rd point
+                DrawFilledQuarterCircleWithLines(hdcMem, points[0].x, points[0].y, r, q, currentFillColor);
+            }
+            else if (shapeType == SHAPE_FILLED_CIRCLE_CIRCLES) {
+                int r = points[2].x; // Radius stored in x-component of 3rd point
+                int q = points[2].y; // Quarter stored in y-component of 3rd point
+                DrawCirclesWithSmallCircles(hdcMem, points[0].x, points[0].y, r, q, currentFillColor);
+            }
+            else if (shapeType == SHAPE_FILLED_SQUARE_HERMITE) {
+                int size = points[1].x; // Size stored in x-component of 2nd point
+                DrawSquareWithVerticalHermite(hdcMem, points[0].x, points[0].y, size, currentFillColor);
+            }
+        }
+
+        // 3. Draw temporary active shape (if any) to memory DC
+        if (drawingActive && !drawingPolygonOrCurve && currentActiveShapeType != SHAPE_FLOOD_FILL && currentActiveShapeType != SHAPE_FILLED_RECTANGLE_BEZIER) {
+            SelectObject(hdcMem, CreatePen(PS_DOT, 1, currentShapeColor)); // Dotted line for temporary draw
+            if (currentActiveShapeType == SHAPE_LINE) {
+                MoveToEx(hdcMem, startPoint.x, startPoint.y, NULL);
+                LineTo(hdcMem, endPoint.x, endPoint.y);
+            }
+            else if (currentActiveShapeType == SHAPE_CIRCLE) {
+                int radius = static_cast<int>(sqrt(pow(endPoint.x - startPoint.x, 2) + pow(endPoint.y - startPoint.y, 2)));
+                Ellipse(hdcMem, startPoint.x - radius, startPoint.y - radius, startPoint.x + radius, startPoint.y + radius);
+            }
+            else if (currentActiveShapeType == SHAPE_ELLIPSE) {
+                Ellipse(hdcMem, startPoint.x - abs(endPoint.x - startPoint.x), startPoint.y - abs(endPoint.y - startPoint.y),
+                    startPoint.x + abs(endPoint.x - startPoint.x), startPoint.y + abs(endPoint.y - startPoint.y));
+            }
+            else if (currentActiveShapeType == SHAPE_CLIP_RECT) {
+                // Draw temporary clipping window
+                Rectangle(hdcMem, min(startPoint.x, endPoint.x), min(startPoint.y, endPoint.y),
+                    max(startPoint.x, endPoint.x), max(startPoint.y, endPoint.y));
+            }
+            else if (currentActiveShapeType == SHAPE_FILLED_CIRCLE_LINES || currentActiveShapeType == SHAPE_FILLED_CIRCLE_CIRCLES ||
+                currentActiveShapeType == SHAPE_FILLED_SQUARE_HERMITE) {
+                int r = static_cast<int>(sqrt(pow(endPoint.x - startPoint.x, 2) + pow(endPoint.y - startPoint.y, 2)));
+                Ellipse(hdcMem, startPoint.x - r, startPoint.y - r, startPoint.x + r, startPoint.y + r); // Draw temp circle
+            }
+            DeleteObject(SelectObject(hdcMem, hOldPen)); // Restore original pen
+        }
+        else if (drawingPolygonOrCurve) { // Drawing temporary points for polygon/curve
+            SelectObject(hdcMem, CreatePen(PS_DOT, 1, RGB(0, 0, 255))); // Blue dotted line
+            if (!currentPoints.empty()) {
+                MoveToEx(hdcMem, currentPoints[0].x, currentPoints[0].y, NULL);
+                for (size_t i = 1; i < currentPoints.size(); ++i) {
+                    LineTo(hdcMem, currentPoints[i].x, currentPoints[i].y);
+                }
+                LineTo(hdcMem, endPoint.x, endPoint.y); // Line to current mouse position
+            }
+            DeleteObject(SelectObject(hdcMem, hOldPen)); // Restore original pen
+        }
+
+        // 4. BitBlt from memory DC to screen DC
+        BitBlt(hdc, 0, 0, clientRect.right, clientRect.bottom, hdcMem, 0, 0, SRCCOPY);
+
+        // Cleanup
+        DeleteObject(hPen);
+        EndPaint(hwnd, &ps);
+    } break;
+
+    case WM_TIMER: {
+        if (wParam == TIMER_ID_BEZIER_FILL) {
+            if (currentBezierFillStep < 100) { // NUM_STEPS equivalent for animation
+                double t = static_cast<double>(currentBezierFillStep) / 100.0;
+                double next_t = static_cast<double>(currentBezierFillStep + 1) / 100.0;
+
+                HDC hdcClient = GetDC(hwnd);
+                // Draw horizontal lines between points on the bezier curves.
+                // This is a simplified animation for filling a rectangle with horizontal bezier.
+                for (int y = bezierFillTargetRect.top; y < bezierFillTargetRect.bottom; y += 5) { // Iterate vertically
+                    // Create horizontal Bezier curve for each y
+                    POINT line_p0 = { bezierFillTargetRect.left, y };
+                    POINT line_p1 = { bezierFillTargetRect.left + (bezierFillTargetRect.right - bezierFillTargetRect.left) / 3, y + (bezierFillTargetRect.bottom - y) / 2 };
+                    POINT line_p2 = { bezierFillTargetRect.left + 2 * (bezierFillTargetRect.right - bezierFillTargetRect.left) / 3, y - (bezierFillTargetRect.bottom - y) / 2 };
+                    POINT line_p3 = { bezierFillTargetRect.right, y };
+                    DrawBezierLineSegment(hdcMem, line_p0, line_p1, line_p2, line_p3, 0.0, 1.0, currentFillColor);
+                }
+                ReleaseDC(hwnd, hdcClient);
+                InvalidateRect(hwnd, &bezierFillTargetRect, FALSE); // Only redraw affected area
+                currentBezierFillStep++;
+            }
+            else {
+                KillTimer(hwnd, TIMER_ID_BEZIER_FILL);
+                currentBezierFillStep = 0;
+                OutputDebugString(L"WM_TIMER: Bezier Fill Animation finished.\n");
+            }
+        }
+    } break;
+
+    case WM_DESTROY:
+        PostQuitMessage(0);
+        OutputDebugString(L"WM_DESTROY: Window destroyed, exiting.\n");
+        break;
+
+    default:
+        return DefWindowProc(hwnd, msg, wParam, lParam);
+    }
+    return 0;
+}
+
+// --- Helper Functions ---
+void SetPixelSafe(HDC hdc, int x, int y, COLORREF color) {
+    if (x >= 0 && x < clientRect.right && y >= 0 && y < clientRect.bottom) {
+        SetPixel(hdc, x, y, color);
+    }
+}
+
+int Round(double x) {
+    return static_cast<int>(x + 0.5);
+}
+
+void swapPoints(POINT& p1, POINT& p2) {
+    POINT temp = p1;
+    p1 = p2;
+    p2 = temp;
+}
+
+// --- General Drawing Functions ---
+void DrawLine(HDC hdc, int x0, int y0, int x1, int y1, COLORREF color) {
+    // Bresenham's Line Algorithm (from user's snippet, used as default)
+    int dx = abs(x1 - x0), dy = abs(y1 - y0);
+    int sx = (x0 < x1) ? 1 : -1;
+    int sy = (y0 < y1) ? 1 : -1;
+    int err = dx - dy;
+
+    while (true) {
+        SetPixelSafe(hdc, x0, y0, color);
+        if (x0 == x1 && y0 == y1) break;
+        int e2 = 2 * err;
+        if (e2 > -dy) {
+            err -= dy;
+            x0 += sx;
+        }
+        if (e2 < dx) {
+            err += dx;
+            y0 += sy;
+        }
+    }
+}
+
+// --- Line Algorithms ---
+void DrawDDALine(HDC hdc, POINT p1, POINT p2, COLORREF color) {
+    int dx = p2.x - p1.x;
+    int dy = p2.y - p1.y;
+    int steps = max(abs(dx), abs(dy));
+
+    if (steps == 0) { SetPixelSafe(hdc, p1.x, p1.y, color); return; }
+
+    float xIncrement = static_cast<float>(dx) / steps;
+    float yIncrement = static_cast<float>(dy) / steps;
+
+    float x = p1.x;
+    float y = p1.y;
+
+    for (int k = 0; k <= steps; ++k) {
+        SetPixelSafe(hdc, Round(x), Round(y), color);
+        x += xIncrement;
+        y += yIncrement;
+    }
+}
+
+void DrawMidpointLine(HDC hdc, POINT p1, POINT p2, COLORREF color) {
+    // Bresenham's Line (already present in DrawLine, but duplicated here for explicit call)
+    DrawLine(hdc, p1.x, p1.y, p2.x, p2.y, color);
+}
+
+void DrawParametricLine(HDC hdc, POINT p1, POINT p2, COLORREF color) {
+    int dx = p2.x - p1.x;
+    int dy = p2.y - p1.y;
+    int steps = max(abs(dx), abs(dy)); // Number of points to sample
+
+    if (steps == 0) { SetPixelSafe(hdc, p1.x, p1.y, color); return; }
+
+    for (int i = 0; i <= steps; ++i) {
+        double t = static_cast<double>(i) / steps;
+        int x = Round(p1.x + t * dx);
+        int y = Round(p1.y + t * dy);
+        SetPixelSafe(hdc, x, y, color);
+    }
+}
+
+// --- Circle Algorithms ---
+void Draw8Points(HDC hdc, int xc, int yc, int x, int y, COLORREF c) {
+    SetPixelSafe(hdc, xc + x, yc + y, c);
+    SetPixelSafe(hdc, xc - x, yc + y, c);
+    SetPixelSafe(hdc, xc + x, yc - y, c);
+    SetPixelSafe(hdc, xc - x, yc - y, c);
+    SetPixelSafe(hdc, xc + y, yc + x, c);
+    SetPixelSafe(hdc, xc - y, yc + x, c);
+    SetPixelSafe(hdc, xc + y, yc - x, c);
+    SetPixelSafe(hdc, xc - y, yc - x, c);
+}
+
+void DrawDirectCircle(HDC hdc, int xc, int yc, int r, COLORREF color) {
+    int r2 = r * r;
+    for (int x = 0; x <= r; ++x) {
+        int y = Round(sqrt(r2 - x * x));
+        Draw8Points(hdc, xc, yc, x, y, color);
+    }
+    for (int y = 0; y <= r; ++y) { // To cover flat circles more robustly
+        int x = Round(sqrt(r2 - y * y));
+        Draw8Points(hdc, xc, yc, x, y, color);
+    }
+}
+
+void DrawPolarCircle(HDC hdc, int xc, int yc, int r, COLORREF color) {
+    double dtheta = 1.0 / r; // Angle increment based on radius for smoother curve
+    for (double theta = 0; theta <= M_PI / 4 + 0.001; theta += dtheta) { // Iterate up to 45 degrees
+        int x = Round(r * cos(theta));
+        int y = Round(r * sin(theta));
+        Draw8Points(hdc, xc, yc, x, y, color);
+    }
+}
+
+void DrawIterativePolarCircle(HDC hdc, int xc, int yc, int r, COLORREF color) {
+    double dtheta = 1.0 / r;
+    double cos_dtheta = cos(dtheta);
+    double sin_dtheta = sin(dtheta);
+    double x = r;
+    double y = 0;
+
+    for (int i = 0; i <= Round(M_PI / 4 / dtheta); ++i) { // Roughly 45 degrees of steps
+        Draw8Points(hdc, xc, yc, Round(x), Round(y), color);
+        double next_x = x * cos_dtheta - y * sin_dtheta;
+        double next_y = x * sin_dtheta + y * cos_dtheta;
+        x = next_x;
+        y = next_y;
+    }
+}
+
+void DrawMidpointCircle(HDC hdc, int xc, int yc, int r, COLORREF color) {
+    int x = 0, y = r;
+    int p = 1 - r; // Initial decision parameter
+
+    while (x <= y) {
+        Draw8Points(hdc, xc, yc, x, y, color);
+        x++;
+        if (p < 0) {
+            p += 2 * x + 1;
+        }
+        else {
+            y--;
+            p += 2 * (x - y) + 1;
+        }
+    }
+}
+
+void DrawModifiedMidpointCircle(HDC hdc, int xc, int yc, int r, COLORREF color) {
+    // This is essentially Bresenham's (Midpoint) Circle Algorithm.
+    // "Modified" often refers to slight variations in initial parameters or step updates
+    // for integer arithmetic, but the core idea is the same.
+    // For this implementation, it uses the standard Midpoint algorithm.
+    DrawMidpointCircle(hdc, xc, yc, r, color);
+}
+
+// --- Ellipse Algorithms ---
+void Draw4Points(HDC hdc, int xc, int yc, int x, int y, COLORREF c) {
+    SetPixelSafe(hdc, xc + x, yc + y, c);
+    SetPixelSafe(hdc, xc + x, yc - y, c);
+    SetPixelSafe(hdc, xc - x, yc + y, c);
+    SetPixelSafe(hdc, xc - x, yc - y, c);
+}
+
+void DrawDirectEllipse(HDC hdc, int xc, int yc, int a, int b, COLORREF color) {
+    if (a == 0 || b == 0) return; // Avoid division by zero
+    double a2 = (double)a * a;
+    double b2 = (double)b * b;
+
+    // Region 1 (slope |dy/dx| <= 1)
+    for (int x = 0; x <= a; ++x) {
+        int y = Round(b * sqrt(1.0 - (x * x) / a2));
+        Draw4Points(hdc, xc, yc, x, y, color);
+    }
+    // Region 2 (slope |dy/dx| > 1)
+    for (int y = 0; y <= b; ++y) {
+        int x = Round(a * sqrt(1.0 - (y * y) / b2));
+        Draw4Points(hdc, xc, yc, x, y, color);
+    }
+}
+
+void DrawPolarEllipse(HDC hdc, int xc, int yc, int a, int b, COLORREF color) {
+    double dtheta = 1.0 / max(a, b);
+    for (double theta = 0; theta <= M_PI / 2 + 0.001; theta += dtheta) { // Iterate up to 90 degrees
+        int x = Round(a * cos(theta));
+        int y = Round(b * sin(theta));
+        Draw4Points(hdc, xc, yc, x, y, color);
+    }
+}
+
+void DrawMidpointEllipse(HDC hdc, int xc, int yc, int a, int b, COLORREF color) {
+    long long a2 = (long long)a * a;
+    long long b2 = (long long)b * b;
+    long long twoA2 = 2 * a2;
+    long long twoB2 = 2 * b2;
+    long long p;
+    long long x = 0, y = b;
+    long long px = 0, py = twoA2 * y; // pX, pY values (2*ry^2*x, 2*rx^2*y from circle, adjusted for ellipse)
+
+    // Region 1: (dy/dx) < 1.0
+    p = Round(b2 - a2 * b + 0.25 * a2); // Initial decision parameter for region 1
+    while (px < py) {
+        Draw4Points(hdc, xc, yc, (int)x, (int)y, color);
+        x++;
+        px += twoB2;
+        if (p < 0) {
+            p += b2 + px;
+        }
+        else {
+            y--;
+            py -= twoA2;
+            p += b2 + px - py;
+        }
+    }
+
+    // Region 2: (dy/dx) >= 1.0
+    p = Round(b2 * (x + 0.5) * (x + 0.5) + a2 * (y - 1) * (y - 1) - a2 * b2); // Initial decision parameter for region 2
+    while (y >= 0) {
+        Draw4Points(hdc, xc, yc, (int)x, (int)y, color);
+        y--;
+        py -= twoA2;
+        if (p > 0) {
+            p += a2 - py;
+        }
+        else {
+            x++;
+            px += twoB2;
+            p += a2 - py + px;
+        }
+    }
+}
+
+// --- Flood Fill Algorithms ---
+void FloodFillRecursive(HDC hdc, int x, int y, COLORREF fillColor, COLORREF targetColor) {
+    if (x < 0 || x >= clientRect.right || y < 0 || y >= clientRect.bottom) return;
+    COLORREF currentPxColor = GetPixel(hdc, x, y);
+    if (currentPxColor != targetColor || currentPxColor == fillColor) return;
+
+    SetPixelSafe(hdc, x, y, fillColor);
+    FloodFillRecursive(hdc, x + 1, y, fillColor, targetColor);
+    FloodFillRecursive(hdc, x - 1, y, fillColor, targetColor);
+    FloodFillRecursive(hdc, x, y + 1, fillColor, targetColor);
+    FloodFillRecursive(hdc, x, y - 1, fillColor, targetColor);
+}
+
+void FloodFillNRecursive(HDC hdc, int x, int y, COLORREF boundaryColor, COLORREF fillColor) {
+    if (x < 0 || x >= clientRect.right || y < 0 || y >= clientRect.bottom) return;
+    COLORREF currentPxColor = GetPixel(hdc, x, y);
+    if (currentPxColor == boundaryColor || currentPxColor == fillColor) return;
+
+    std::stack<POINT> s;
+    s.push({ x, y });
+
+    while (!s.empty()) {
+        POINT p = s.top();
+        s.pop();
+
+        currentPxColor = GetPixel(hdc, p.x, p.y);
+        if (currentPxColor == boundaryColor || currentPxColor == fillColor) continue;
+
+        SetPixelSafe(hdc, p.x, p.y, fillColor);
+
+        // Check neighbors
+        if (p.x + 1 < clientRect.right) s.push({ p.x + 1, p.y });
+        if (p.x - 1 >= 0) s.push({ p.x - 1, p.y });
+        if (p.y + 1 < clientRect.bottom) s.push({ p.x, p.y + 1 });
+        if (p.y - 1 >= 0) s.push({ p.x, p.y - 1 });
+    }
+}
+
+// --- Curve Algorithms ---
+void DrawCardinalSpline(HDC hdc, const std::vector<POINT>& points, double tension, COLORREF color) {
+    if (points.size() < 4) { // Need at least 4 points (P0, P1, P2, P3 for first segment)
+        OutputDebugString(L"Cardinal Spline requires at least 4 control points.\n");
+        return;
+    }
+
+    double s = 0.5 * (1.0 - tension); // Tension factor [0, 1]
+
+    for (size_t i = 1; i < points.size() - 2; ++i) { // Loop through segments defined by P1, P2
+        POINT p0 = points[i - 1];
+        POINT p1 = points[i];
+        POINT p2 = points[i + 1];
+        POINT p3 = points[i + 2];
+
+        POINT prev_p = p1; // Start point for the curve segment
+
+        for (int j = 0; j <= 100; ++j) { // 100 steps per segment
+            double t = static_cast<double>(j) / 100.0;
+            double t2 = t * t;
+            double t3 = t2 * t;
+
+            // Hermite basis functions for interpolation (t_prime terms are tangents)
+            double h1 = 2 * t3 - 3 * t2 + 1;
+            double h2 = -2 * t3 + 3 * t2;
+            double h3 = t3 - 2 * t2 + t;
+            double h4 = t3 - t2;
+
+            // Tangents T1 = s * (P2 - P0), T2 = s * (P3 - P1)
+            POINT T1 = { Round(s * (p2.x - p0.x)), Round(s * (p2.y - p0.y)) };
+            POINT T2 = { Round(s * (p3.x - p1.x)), Round(s * (p3.y - p1.y)) };
+
+            POINT currentP;
+            currentP.x = Round(h1 * p1.x + h2 * p2.x + h3 * T1.x + h4 * T2.x);
+            currentP.y = Round(h1 * p1.y + h2 * p2.y + h3 * T1.y + h4 * T2.y);
+
+            if (j > 0) {
+                DrawLine(hdc, prev_p.x, prev_p.y, currentP.x, currentP.y, color);
+            }
+            prev_p = currentP;
+        }
+    }
+}
+
+void DrawBezierCurve(HDC hdc, POINT p0, POINT p1, POINT p2, POINT p3, COLORREF color) {
+    const int numSegments = 100; // Number of line segments to approximate the curve
+    POINT prevP = p0; // Start with the first control point
+
+    for (int i = 1; i <= numSegments; ++i) {
+        double t = static_cast<double>(i) / numSegments;
+        double t_inv = 1.0 - t;
+
+        // Calculate point on Bezier curve using Bernstein polynomials
+        POINT currentP;
+        currentP.x = Round(t_inv * t_inv * t_inv * p0.x +
+            3 * t_inv * t_inv * t * p1.x +
+            3 * t_inv * t * t * p2.x +
+            t * t * t * p3.x);
+        currentP.y = Round(t_inv * t_inv * t_inv * p0.y +
+            3 * t_inv * t_inv * t * p1.y +
+            3 * t_inv * t * t * p2.y +
+            t * t * t * p3.y);
+
+        DrawLine(hdc, prevP.x, prevP.y, currentP.x, currentP.y, color);
+        prevP = currentP;
+    }
+}
+
+// --- Clipping Algorithms ---
+OutCode GetOutCode(int x, int y, RECT clipRect) {
+    OutCode code = INSIDE;
+    if (x < clipRect.left) code = (OutCode)(code | LEFT);
+    else if (x > clipRect.right) code = (OutCode)(code | RIGHT);
+    if (y < clipRect.top) code = (OutCode)(code | TOP);
+    else if (y > clipRect.bottom) code = (OutCode)(code | BOTTOM);
+    return code;
+}
+
+POINT VIntersect(double xedge, POINT p1, POINT p2) {
+    POINT result;
+    result.x = Round(xedge);
+    if (p2.x - p1.x != 0) // Avoid division by zero
+        result.y = Round(p1.y + (xedge - p1.x) * (double)(p2.y - p1.y) / (p2.x - p1.x));
+    else // Vertical line, take average y
+        result.y = (p1.y + p2.y) / 2; // Or simply p1.y or p2.y
+    return result;
+}
+
+POINT HIntersect(double yedge, POINT p1, POINT p2) {
+    POINT result;
+    result.y = Round(yedge);
+    if (p2.y - p1.y != 0) // Avoid division by zero
+        result.x = Round(p1.x + (yedge - p1.y) * (double)(p2.x - p1.x) / (p2.y - p1.y));
+    else // Horizontal line, take average x
+        result.x = (p1.x + p2.x) / 2; // Or simply p1.x or p2.x
+    return result;
+}
+
+void ClipPoint(HDC hdc, POINT p, RECT clipRect, COLORREF color) {
+    if (p.x >= clipRect.left && p.x <= clipRect.right &&
+        p.y >= clipRect.top && p.y <= clipRect.bottom) {
+        SetPixelSafe(hdc, p.x, p.y, color);
+    }
+}
+
+bool ClipLineCohenSutherland(HDC hdc, POINT p1, POINT p2, RECT clipRect, COLORREF color) {
+    OutCode outcode1 = GetOutCode(p1.x, p1.y, clipRect);
+    OutCode outcode2 = GetOutCode(p2.x, p2.y, clipRect);
+    bool accept = false;
+
+    while (true) {
+        if (!(outcode1 | outcode2)) { // Both endpoints inside or on boundary
+            accept = true;
+            break;
+        }
+        else if (outcode1 & outcode2) { // Both endpoints outside and on same side of clip window
+            break;
+        }
+        else { // Line partially inside or crossing boundaries
+            OutCode outcodeOut = outcode1 ? outcode1 : outcode2; // Pick an outside point
+
+            POINT intersection;
+            if (outcodeOut & TOP) {
+                intersection = HIntersect(clipRect.top, p1, p2);
+            }
+            else if (outcodeOut & BOTTOM) {
+                intersection = HIntersect(clipRect.bottom, p1, p2);
+            }
+            else if (outcodeOut & RIGHT) {
+                intersection = VIntersect(clipRect.right, p1, p2);
+            }
+            else if (outcodeOut & LEFT) {
+                intersection = VIntersect(clipRect.left, p1, p2);
+            }
+            else {
+                // This case should not be reached if one of the codes is not INSIDE
+                break;
+            }
+
+            if (outcodeOut == outcode1) {
+                p1 = intersection;
+                outcode1 = GetOutCode(p1.x, p1.y, clipRect);
+            }
+            else {
+                p2 = intersection;
+                outcode2 = GetOutCode(p2.x, p2.y, clipRect);
+            }
+        }
+    }
+
+    if (accept) {
+        DrawLine(hdc, p1.x, p1.y, p2.x, p2.y, color);
+    }
+    return accept;
+}
+
+bool InsideSutherlandHodgman(POINT p, int edge, RECT r) {
+    switch (edge) {
+    case 0: return p.x >= r.left;   // Left edge
+    case 1: return p.x <= r.right;  // Right edge
+    case 2: return p.y >= r.top;    // Top edge
+    case 3: return p.y <= r.bottom; // Bottom edge
+    }
+    return false;
+}
+
+POINT IntersectSutherlandHodgman(POINT p1, POINT p2, int edge, RECT r) {
+    POINT p;
+    double slope_x = (double)(p2.x - p1.x);
+    double slope_y = (double)(p2.y - p1.y);
+
+    switch (edge) {
+    case 0: // Left
+        p.x = r.left;
+        p.y = Round(p1.y + (r.left - p1.x) * (slope_y / slope_x));
+        break;
+    case 1: // Right
+        p.x = r.right;
+        p.y = Round(p1.y + (r.right - p1.x) * (slope_y / slope_x));
+        break;
+    case 2: // Top
+        p.y = r.top;
+        p.x = Round(p1.x + (r.top - p1.y) * (slope_x / slope_y));
+        break;
+    case 3: // Bottom
+        p.y = r.bottom;
+        p.x = Round(p1.x + (r.bottom - p1.y) * (slope_x / slope_y));
+        break;
+    }
+    return p;
+}
+
+void ClipPolygonSutherlandHodgman(HDC hdc, const std::vector<POINT>& input, RECT clipRect, COLORREF color) {
+    std::vector<POINT> poly = input;
+
+    for (int edge = 0; edge < 4; edge++) { // 0:Left, 1:Right, 2:Top, 3:Bottom
+        std::vector<POINT> output;
+        if (poly.empty()) break; // No points to clip
+
+        POINT S = poly.back(); // Start with last point
+
+        for (size_t i = 0; i < poly.size(); i++) {
+            POINT E = poly[i]; // End point
+            bool S_inside = InsideSutherlandHodgman(S, edge, clipRect);
+            bool E_inside = InsideSutherlandHodgman(E, edge, clipRect);
+
+            if (E_inside) {
+                if (!S_inside) {
+                    output.push_back(IntersectSutherlandHodgman(S, E, edge, clipRect));
+                }
+                output.push_back(E);
+            }
+            else if (S_inside) {
+                output.push_back(IntersectSutherlandHodgman(S, E, edge, clipRect));
+            }
+            S = E; // Move to next segment
+        }
+        poly = output; // Update polygon for next edge
+    }
+
+    // Draw the clipped polygon
+    if (poly.size() >= 2) {
+        HPEN hPen = CreatePen(PS_SOLID, 1, color);
+        HPEN hOldPen = (HPEN)SelectObject(hdc, hPen);
+        MoveToEx(hdc, poly[0].x, poly[0].y, NULL);
+        for (size_t i = 1; i < poly.size(); i++) {
+            LineTo(hdc, poly[i].x, poly[i].y);
+        }
+        LineTo(hdc, poly[0].x, poly[0].y); // Close the polygon
+        SelectObject(hdc, hOldPen);
+        DeleteObject(hPen);
+    }
+}
+
+void DrawClippingWindow(HDC hdc, RECT rect) {
+    HPEN hPen = CreatePen(PS_DOT, 1, RGB(255, 0, 0)); // Red dotted line
+    HPEN hOldPen = (HPEN)SelectObject(hdc, hPen);
+    HBRUSH hBrush = (HBRUSH)GetStockObject(NULL_BRUSH);
+    HBRUSH hOldBrush = (HBRUSH)SelectObject(hdc, hBrush);
+
+    Rectangle(hdc, rect.left, rect.top, rect.right, rect.bottom);
+
+    SelectObject(hdc, hOldPen);
+    DeleteObject(hPen);
+    SelectObject(hdc, hOldBrush);
+}
+
+
+// --- Polygon Filling Algorithms ---
+void ScanlineFill(HDC hdc, const std::vector<POINT>& polygon, COLORREF fillColor) {
+    if (polygon.size() < 3) return;
+
+    int ymin = polygon[0].y, ymax = polygon[0].y;
+    for (const auto& p : polygon) {
+        ymin = min(ymin, p.y);
+        ymax = max(ymax, p.y);
+    }
+
+    for (int y = ymin; y <= ymax; y++) {
+        std::vector<int> intersections;
+        for (size_t i = 0; i < polygon.size(); i++) {
+            POINT p1 = polygon[i];
+            POINT p2 = polygon[(i + 1) % polygon.size()];
+
+            if (p1.y == p2.y) continue; // Skip horizontal edges
+
+            // Ensure p1.y is always less than p2.y for consistent intersection logic
+            if (p1.y > p2.y) std::swap(p1, p2);
+
+            if ((y >= p1.y) && (y < p2.y)) { // Check if scanline intersects segment
+                // Calculate x-intersection
+                double x_intersect = p1.x + (double)(y - p1.y) * (p2.x - p1.x) / (p2.y - p1.y);
+                intersections.push_back(Round(x_intersect));
+            }
+        }
+        std::sort(intersections.begin(), intersections.end());
+
+        // Fill pairs of intersections
+        for (size_t i = 0; i + 1 < intersections.size(); i += 2) {
+            for (int x = intersections[i]; x <= intersections[i + 1]; x++) {
+                SetPixelSafe(hdc, x, y, fillColor);
+            }
+        }
+    }
+}
+
+
+// --- Circle Filling Algorithms ---
+void SetCirclePixelsQuarter(HDC hdc, int xc, int yc, int x, int y, int quarter, COLORREF color) {
+    // Plots pixels for a single quarter of a circle
+    switch (quarter) {
+    case 1: // Top-Right (octets 1 & 8)
+        SetPixelSafe(hdc, xc + x, yc - y, color); // Octet 1
+        SetPixelSafe(hdc, xc + y, yc - x, color); // Octet 8
+        break;
+    case 2: // Top-Left (octets 2 & 7)
+        SetPixelSafe(hdc, xc - x, yc - y, color); // Octet 2
+        SetPixelSafe(hdc, xc - y, yc - x, color); // Octet 7
+        break;
+    case 3: // Bottom-Left (octets 3 & 6)
+        SetPixelSafe(hdc, xc - x, yc + y, color); // Octet 3
+        SetPixelSafe(hdc, xc - y, yc + x, color); // Octet 6
+        break;
+    case 4: // Bottom-Right (octets 4 & 5)
+        SetPixelSafe(hdc, xc + x, yc + y, color); // Octet 4
+        SetPixelSafe(hdc, xc + y, yc + x, color); // Octet 5
+        break;
+    }
+}
+
+void DrawCircleMidpointQuarter(HDC hdc, int xc, int yc, int r, int quarter, COLORREF color) {
+    int x = 0, y = r;
+    int d = 1 - r;
+
+    while (x <= y) {
+        SetCirclePixelsQuarter(hdc, xc, yc, x, y, quarter, color);
+        x++;
+        if (d < 0) {
+            d += 2 * x + 1;
+        }
+        else {
+            y--;
+            d += 2 * (x - y) + 1;
+        }
+    }
+}
+
+void DrawFilledQuarterCircleWithLines(HDC hdc, int centerX, int centerY, int radius, int quarter, COLORREF color) {
+    DrawCircleMidpointQuarter(hdc, centerX, centerY, radius, quarter, color); // Draw the quarter outline
+
+    // Fill logic: draw lines from center to points on the arc, or horizontally/vertically
+    // Horizontal lines for filling is more common for this.
+    for (int y_offset = 0; y_offset <= radius; ++y_offset) {
+        int x_at_y = Round(sqrt(radius * radius - y_offset * y_offset));
+
+        POINT p1_h, p2_h;
+        if (quarter == 1) { // Top-Right
+            p1_h = { centerX, centerY - y_offset };
+            p2_h = { centerX + x_at_y, centerY - y_offset };
+        }
+        else if (quarter == 2) { // Top-Left
+            p1_h = { centerX - x_at_y, centerY - y_offset };
+            p2_h = { centerX, centerY - y_offset };
+        }
+        else if (quarter == 3) { // Bottom-Left
+            p1_h = { centerX - x_at_y, centerY + y_offset };
+            p2_h = { centerX, centerY + y_offset };
+        }
+        else { // quarter == 4, Bottom-Right
+            p1_h = { centerX, centerY + y_offset };
+            p2_h = { centerX + x_at_y, centerY + y_offset };
+        }
+        DrawLine(hdc, p1_h.x, p1_h.y, p2_h.x, p2_h.y, color);
+    }
+}
+
+void DrawFilledCircleMidpoint(HDC hdc, int xc, int yc, int r, COLORREF color) {
+    int x = 0, y = r;
+    int d = 1 - r;
+
+    // Draw vertical lines to fill the circle
+    auto DrawVerticalLineSegment = [&](int cx, int cy, int start_y, int end_y, COLORREF c) {
+        if (start_y > end_y) std::swap(start_y, end_y);
+        for (int i = start_y; i <= end_y; i++) {
+            SetPixelSafe(hdc, cx, i, c);
+        }
+        };
+
+    while (x <= y) {
+        DrawVerticalLineSegment(xc + x, yc, yc - y, yc + y, color);
+        DrawVerticalLineSegment(xc - x, yc, yc - y, yc + y, color);
+        DrawVerticalLineSegment(xc + y, yc, yc - x, yc + x, color);
+        DrawVerticalLineSegment(xc - y, yc, yc - x, yc + x, color);
+
+        if (d < 0) d += 2 * x + 3;
+        else {
+            d += 2 * (x - y) + 5;
+            y--;
+        }
+        x++;
+    }
+}
+
+void DrawCirclesWithSmallCircles(HDC hdc, int centerX, int centerY, int radius, int quarter, COLORREF color) {
+    DrawCircleMidpointQuarter(hdc, centerX, centerY, radius, quarter, color); // Draw the main quarter outline
+
+    int smallRadius = radius / 6; // Example: small circles 1/6th of main radius
+    if (smallRadius < 5) smallRadius = 5; // Minimum size for visibility
+    int spacing = smallRadius * 2 + 5; // Spacing between small circle centers
+
+    // Iterate through a bounding box for the quarter
+    // Adjust loop bounds to ensure centers are within the quarter
+    for (int y_offset_abs = 0; y_offset_abs <= radius - smallRadius; y_offset_abs += spacing) {
+        for (int x_offset_abs = 0; x_offset_abs <= radius - smallRadius; x_offset_abs += spacing) {
+            int x_offset = x_offset_abs;
+            int y_offset = y_offset_abs;
+
+            // Apply quarter signs
+            if (quarter == 2 || quarter == 3) x_offset = -x_offset_abs;
+            if (quarter == 1 || quarter == 2) y_offset = -y_offset_abs;
+
+            // Check if the center of the small circle is within the larger quarter circle
+            if ((x_offset * x_offset + y_offset * y_offset) <= (radius - smallRadius) * (radius - smallRadius)) {
+                // Draw the small circle
+                DrawFilledCircleMidpoint(hdc, centerX + x_offset, centerY + y_offset, smallRadius, color);
+            }
+        }
+    }
+}
+
+
+// --- Rectangle/Square Filling Algorithms ---
+void DrawRectangleOutline(HDC hdc, int left, int top, int right, int bottom, COLORREF color) {
+    DrawLine(hdc, left, top, right, top, color);
+    DrawLine(hdc, right, top, right, bottom, color);
+    DrawLine(hdc, right, bottom, left, bottom, color);
+    DrawLine(hdc, left, bottom, left, top, color);
+}
+
+void DrawHermiteCurve(HDC hdc, POINT p0, POINT t0, POINT p1, POINT t1, COLORREF color) {
+    const int steps = 100;
+    POINT prevP = p0; // Start with the first point
+
+    for (int i = 1; i <= steps; ++i) {
+        double t = i / (double)steps;
+        double t2 = t * t;
+        double t3 = t2 * t;
+
+        double h1 = 2 * t3 - 3 * t2 + 1;
+        double h2 = -2 * t3 + 3 * t2;
+        double h3 = t3 - 2 * t2 + t;
+        double h4 = t3 - t2;
+
+        int x_curr = Round(h1 * p0.x + h2 * p1.x + h3 * t0.x + h4 * t1.x);
+        int y_curr = Round(h1 * p0.y + h2 * p1.y + h3 * t0.y + h4 * t1.y);
+
+        DrawLine(hdc, prevP.x, prevP.y, x_curr, y_curr, color);
+        prevP = { x_curr, y_curr };
+    }
+}
+
+void DrawSquareWithVerticalHermite(HDC hdc, int centerX, int centerY, int size, COLORREF color) {
+    int halfSize = size / 2;
+    int left = centerX - halfSize;
+    int right = centerX + halfSize;
+    int top = centerY - halfSize;
+    int bottom = centerY + halfSize;
+
+    DrawRectangleOutline(hdc, left, top, right, bottom, color);
+
+    // Draw vertical Hermite curves inside the square
+    for (int x = left + 5; x < right; x += 15) { // Spacing of 15
+        POINT p0 = { x, bottom }; // Start point at bottom of line
+        POINT p1 = { x, top };    // End point at top of line
+
+        // Tangent vectors for vertical lines
+        POINT t0 = { 0, -50 }; // Tangent at p0, pointing upwards
+        POINT t1 = { 0, 50 };  // Tangent at p1, pointing downwards
+
+        DrawHermiteCurve(hdc, p0, t0, p1, t1, color);
+    }
+}
+
+void DrawBezierLineSegment(HDC hdc, POINT p0, POINT p1, POINT p2, POINT p3, double t_start, double t_end, COLORREF color) {
+    // Calculate start point of the segment
+    double invT_start = 1.0 - t_start;
+    POINT currentP_start;
+    currentP_start.x = Round(invT_start * invT_start * invT_start * p0.x +
+        3 * invT_start * invT_start * t_start * p1.x +
+        3 * invT_start * t_start * t_start * p2.x +
+        t_start * t_start * t_start * p3.x);
+    currentP_start.y = Round(invT_start * invT_start * invT_start * p0.y +
+        3 * invT_start * invT_start * t_start * p1.y +
+        3 * invT_start * t_start * t_start * p2.y +
+        t_start * t_start * t_start * p3.y);
+
+    // Calculate end point of the segment
+    double invT_end = 1.0 - t_end;
+    POINT currentP_end;
+    currentP_end.x = Round(invT_end * invT_end * invT_end * p0.x +
+        3 * invT_end * invT_end * t_end * p1.x +
+        3 * invT_end * t_end * t_end * p2.x +
+        t_end * t_end * t_end * p3.x);
+    currentP_end.y = Round(invT_end * invT_end * invT_end * p0.y +
+        3 * invT_end * invT_end * t_end * p1.y +
+        3 * invT_end * t_end * t_end * p2.y +
+        t_end * t_end * t_end * p3.y);
+
+    DrawLine(hdc, currentP_start.x, currentP_start.y, currentP_end.x, currentP_end.y, color);
+}
+
+// Dialog Template for Quarter Input (Put this in a .rc file or define directly)
+// For simplicity, defining directly here. In a real app, use a .rc file.
+#define IDD_QUARTER_INPUT 101
+#define IDC_QUARTER_EDIT 100
+// IDOK and IDCANCEL are already defined by Windows.h
+
+const WCHAR g_szQuarterDialogClass[] = L"QuarterDialogClass";
+
+ATOM RegisterQuarterDialogClass(HINSTANCE hInstance) {
+    WNDCLASS wc = { 0 };
+    wc.lpfnWndProc = (WNDPROC)QuarterDialogProc;
+    wc.hInstance = hInstance;
+    wc.lpszClassName = g_szQuarterDialogClass;
+    return RegisterClass(&wc);
+}
+
+// Function to create a simple dialog box for quarter input
+// This function is not used directly, DialogBox is called with MAKEINTRESOURCE
+// It's here for completeness if you were to create a dialog dynamically.
+HWND CreateQuarterInputDialog(HWND hWndParent, HINSTANCE hInstance) {
+  
+    return (HWND)NULL; 
+}
