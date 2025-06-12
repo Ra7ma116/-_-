@@ -1,5 +1,5 @@
-#define _USE_MATH_DEFINES // For M_PI_4 and M_PI_2 in cmath
-#define _CRT_SECURE_NO_WARNINGS // To disable deprecation warning for freopen
+#define _USE_MATH_DEFINES
+#define _CRT_SECURE_NO_WARNINGS
 
 #include <windows.h>
 #include <vector>
@@ -7,38 +7,24 @@
 #include <cmath>
 #include <fstream>
 #include <string>
-#include <algorithm> // For std::swap
-#include <iostream>  // For console output
-#include <iomanip>   // For std::setw, std::fixed, std::setprecision
-#include <commdlg.h> // For ChooseColor dialog
-#include <cstdio>    // For freopen
+#include <algorithm>
+#include <iostream>
+#include <iomanip>
+#include <commdlg.h>
+#include <cstdio>
 
-// Forward declarations
-LRESULT CALLBACK WndProc(HWND, UINT, WPARAM, LPARAM);
-void RegisterMyClass(HINSTANCE hInstance);
-void CreateMainMenu(HWND hwnd);
+// =============================================
+// Constants and Enumerations
+// =============================================
 
-// Global variables
-RECT clientRect;
-
-// Backing buffer (off-screen bitmap) variables
-HDC     hMemDC = NULL;       // Memory Device Context
-HBITMAP hBitmap = NULL;      // Bitmap for off-screen drawing
-HBITMAP hOldBitmap = NULL;   // To store the original bitmap selected into hMemDC
-
-// Separate color variables
-COLORREF drawColor = RGB(0, 0, 0);   // Default drawing color (black)
-COLORREF fillColor = RGB(255, 0, 0); // Default fill color (red)
-COLORREF bgColor = RGB(255, 255, 255); // Default background color (white)
-
-// Enums for drawing modes and algorithms
 enum DrawingMode {
     MODE_NONE,
     MODE_DRAW_LINE,
     MODE_DRAW_CIRCLE,
     MODE_DRAW_ELLIPSE,
     MODE_FLOOD_FILL,
-    MODE_CARDINAL_SPLINE
+    MODE_CARDINAL_SPLINE,
+	MODE_DRAW_POLYGON
 };
 
 enum LineAlgoType {
@@ -67,25 +53,27 @@ enum FillAlgoType {
     FILL_ALGO_NON_RECURSIVE
 };
 
-DrawingMode drawingMode = MODE_NONE;
-LineAlgoType lineAlgorithm = LINE_ALGO_BRESENHAM; // Default line algo
-CircleAlgoType circleAlgorithm = CIRCLE_ALGO_MIDPOINT; // Default circle algo
-EllipseAlgoType ellipseAlgorithm = ELLIPSE_ALGO_MIDPOINT; // Default ellipse algo
-FillAlgoType fillAlgorithm = FILL_ALGO_NON_RECURSIVE; // Default fill algo
-
-bool isDrawing = false;
-POINT startPoint;
-POINT endPoint;
-std::vector<POINT> controlPoints; // For Cardinal Spline
-
-// Structure to hold information about a drawn shape
 enum ShapeType {
     SHAPE_LINE,
     SHAPE_CIRCLE,
     SHAPE_ELLIPSE,
-    SHAPE_FILLED_REGION, // Note: Flood fill's re-drawing logic will still be tricky if the underlying
-    // pixels change, but with a backing buffer, it becomes consistent.
-    SHAPE_CARDINAL_SPLINE
+    SHAPE_FILLED_REGION,
+    SHAPE_CARDINAL_SPLINE,
+    POLYGON_SHAPE
+};
+
+enum PolygonAlgoType {
+	POLYGON_ALGO_SIMPLE,
+	POLYGON_ALGO_EAR_CLIPPING,
+	POLYGON_ALGO_SUTHERLAND_HODGMAN
+};
+   
+
+// =============================================
+// Data Structures
+// =============================================
+struct POINT2D {
+    int x, y;
 };
 
 struct LineShape {
@@ -103,7 +91,7 @@ struct CircleShape {
 
 struct EllipseShape {
     POINT center;
-    int a, b; // Semi-major and semi-minor axes
+    int a, b;
     COLORREF color;
     EllipseAlgoType algo;
 };
@@ -111,11 +99,7 @@ struct EllipseShape {
 struct FilledRegionShape {
     POINT seedPoint;
     COLORREF fillColor;
-    // For recursive fill, this is the original color of the seed pixel.
-    // This is important for re-doing the fill if the screen content changes.
     COLORREF targetColor;
-    // For non-recursive fill (boundary fill style), this is the boundary color.
-    // If not used explicitly, it might default to the initial pixel color at seed.
     COLORREF boundaryColor;
     FillAlgoType algo;
 };
@@ -126,6 +110,12 @@ struct SplineShape {
     COLORREF color;
 };
 
+struct PolygonShape {
+    std::vector<POINT> points;
+    COLORREF drawColor;
+    COLORREF fillColor;
+};
+
 struct DrawnShape {
     ShapeType type;
     union {
@@ -133,85 +123,106 @@ struct DrawnShape {
         CircleShape circle;
         EllipseShape ellipse;
         FilledRegionShape filledRegion;
-        SplineShape spline; // SplineShape also uses vector, but handled specially
+        SplineShape spline;
+        PolygonShape polygon;
     };
 
-    // Default constructor
     DrawnShape() : type(SHAPE_LINE) {}
-
-    // Explicitly define copy constructor
     DrawnShape(const DrawnShape& other) : type(other.type) {
         switch (type) {
-        case SHAPE_LINE:
-            line = other.line;
-            break;
-        case SHAPE_CIRCLE:
-            circle = other.circle;
-            break;
-        case SHAPE_ELLIPSE:
-            ellipse = other.ellipse;
-            break;
-        case SHAPE_FILLED_REGION:
-            filledRegion = other.filledRegion;
-            break;
+        case SHAPE_LINE: line = other.line; break;
+        case SHAPE_CIRCLE: circle = other.circle; break;
+        case SHAPE_ELLIPSE: ellipse = other.ellipse; break;
+        case SHAPE_FILLED_REGION: filledRegion = other.filledRegion; break;
         case SHAPE_CARDINAL_SPLINE:
-            // Deep copy the vector for spline
-            new (&spline) SplineShape(); // Placement new to construct SplineShape in union
+            new (&spline) SplineShape();
             spline.points = other.spline.points;
             spline.tension = other.spline.tension;
             spline.color = other.spline.color;
             break;
+        case POLYGON_SHAPE:
+            // Use placement new to construct the vector within the union member
+            new (&polygon) PolygonShape();
+            polygon.points = other.polygon.points;
+            polygon.drawColor = other.polygon.drawColor;
+            polygon.fillColor = other.polygon.fillColor;
+            break;
         }
     }
 
-    // Explicitly define copy assignment operator
     DrawnShape& operator=(const DrawnShape& other) {
         if (this != &other) {
-            // If current object holds a spline, manually call its destructor
-            // before changing its type or overwriting its data.
             if (type == SHAPE_CARDINAL_SPLINE) {
-                spline.~SplineShape(); // Explicitly call destructor
+                spline.~SplineShape();
+            }
+            else if (type == POLYGON_SHAPE) {
+                polygon.~PolygonShape();
             }
 
             type = other.type;
             switch (type) {
-            case SHAPE_LINE:
-                line = other.line;
-                break;
-            case SHAPE_CIRCLE:
-                circle = other.circle;
-                break;
-            case SHAPE_ELLIPSE:
-                ellipse = other.ellipse;
-                break;
-            case SHAPE_FILLED_REGION:
-                filledRegion = other.filledRegion;
-                break;
+            case SHAPE_LINE: line = other.line; break;
+            case SHAPE_CIRCLE: circle = other.circle; break;
+            case SHAPE_ELLIPSE: ellipse = other.ellipse; break;
+            case SHAPE_FILLED_REGION: filledRegion = other.filledRegion; break;
             case SHAPE_CARDINAL_SPLINE:
-                // Placement new for new SplineShape, then deep copy
                 new (&spline) SplineShape();
                 spline.points = other.spline.points;
                 spline.tension = other.spline.tension;
                 spline.color = other.spline.color;
+                break;
+            case POLYGON_SHAPE:
+                new (&polygon) PolygonShape(); // Placement new
+                polygon.points = other.polygon.points;
+                polygon.drawColor = other.polygon.drawColor;
+                polygon.fillColor = other.polygon.fillColor;
                 break;
             }
         }
         return *this;
     }
 
-    // Destructor (important for unions with non-POD members like std::vector)
     ~DrawnShape() {
         if (type == SHAPE_CARDINAL_SPLINE) {
-            spline.~SplineShape(); // Explicitly call destructor for std::vector
+            spline.~SplineShape();
+        }
+        else if (type == POLYGON_SHAPE) {
+            polygon.~PolygonShape();
         }
     }
 };
 
+
+// =============================================
+// Global Variables
+// =============================================
+
+RECT clientRect;
+HDC hMemDC = NULL;
+HBITMAP hBitmap = NULL;
+HBITMAP hOldBitmap = NULL;
+
+COLORREF drawColor = RGB(0, 0, 0);
+COLORREF fillColor = RGB(255, 0, 0);
+COLORREF bgColor = RGB(255, 255, 255);
+
+DrawingMode drawingMode = MODE_NONE;
+LineAlgoType lineAlgorithm = LINE_ALGO_BRESENHAM;
+CircleAlgoType circleAlgorithm = CIRCLE_ALGO_MIDPOINT;
+EllipseAlgoType ellipseAlgorithm = ELLIPSE_ALGO_MIDPOINT;
+FillAlgoType fillAlgorithm = FILL_ALGO_NON_RECURSIVE;
+PolygonAlgoType polygonAlgorithm = POLYGON_ALGO_SIMPLE;
+
+bool isDrawing = false;
+POINT startPoint;
+POINT endPoint;
+std::vector<POINT> controlPoints;
 std::vector<DrawnShape> drawnShapes;
 
+// =============================================
+// Utility Functions
+// =============================================
 
-// --- Helper Functions ---
-// Now all drawing happens on a target HDC (which will be hMemDC)
 void SetPixelSafe(HDC targetDC, int x, int y, COLORREF color) {
     if (x >= 0 && x < clientRect.right && y >= 0 && y < clientRect.bottom) {
         SetPixel(targetDC, x, y, color);
@@ -228,9 +239,13 @@ void swapPoints(POINT& p1, POINT& p2) {
     p2 = temp;
 }
 
-// --- General Drawing Functions (all now take HDC targetDC) ---
+// =============================================
+// Drawing Algorithms
+// =============================================
+
+// ----------------- Line Algorithms ------------------
+
 void DrawLine(HDC targetDC, int x0, int y0, int x1, int y1, COLORREF color) {
-    // Bresenham's Line Algorithm
     int dx = abs(x1 - x0), dy = abs(y1 - y0);
     int sx = (x0 < x1) ? 1 : -1;
     int sy = (y0 < y1) ? 1 : -1;
@@ -250,8 +265,6 @@ void DrawLine(HDC targetDC, int x0, int y0, int x1, int y1, COLORREF color) {
         }
     }
 }
-
-// ----------------- Line Algorithms ------------------
 
 void DrawDDALine(HDC targetDC, POINT p1, POINT p2, COLORREF color) {
     int x1 = p1.x, y1 = p1.y;
@@ -291,14 +304,13 @@ void DrawDDALine(HDC targetDC, POINT p1, POINT p2, COLORREF color) {
     }
 }
 
-
 void DrawMidpointLine(HDC targetDC, POINT p1, POINT p2, COLORREF color) {
     int x1 = p1.x, y1 = p1.y;
     int x2 = p2.x, y2 = p2.y;
     int dx = x2 - x1;
     int dy = y2 - y1;
 
-    if (abs(dy) <= abs(dx)) { // Slope <= 1
+    if (abs(dy) <= abs(dx)) {
         if (x1 > x2) {
             std::swap(x1, x2);
             std::swap(y1, y2);
@@ -319,7 +331,7 @@ void DrawMidpointLine(HDC targetDC, POINT p1, POINT p2, COLORREF color) {
             d += 2 * abs(dy);
         }
     }
-    else { // Slope > 1
+    else {
         if (y1 > y2) {
             std::swap(x1, x2);
             std::swap(y1, y2);
@@ -342,13 +354,12 @@ void DrawMidpointLine(HDC targetDC, POINT p1, POINT p2, COLORREF color) {
     }
 }
 
-
 void DrawParametricLine(HDC targetDC, POINT p1, POINT p2, COLORREF color) {
     int dx = p2.x - p1.x;
     int dy = p2.y - p1.y;
     double steps = static_cast<double>(max(abs(dx), abs(dy)));
 
-    if (steps == 0) { // Handle single point case
+    if (steps == 0) {
         SetPixelSafe(targetDC, p1.x, p1.y, color);
         return;
     }
@@ -366,8 +377,7 @@ void DrawParametricLine(HDC targetDC, POINT p1, POINT p2, COLORREF color) {
     }
 }
 
-
-// --------------- Circle Algorithms ---------------------
+// ----------------- Circle Algorithms -----------------
 
 void Draw8Points(HDC targetDC, int xc, int yc, int x, int y, COLORREF c) {
     SetPixelSafe(targetDC, xc + x, yc + y, c);
@@ -453,7 +463,7 @@ void DrawModifiedMidpointCircle(HDC targetDC, int xc, int yc, int r, COLORREF co
     }
 }
 
-// ----------------- Ellipse Algorithms --------------------
+// ----------------- Ellipse Algorithms -----------------
 
 void Draw4Points(HDC targetDC, int xc, int yc, int x, int y, COLORREF c) {
     SetPixelSafe(targetDC, xc + x, yc + y, c);
@@ -463,30 +473,27 @@ void Draw4Points(HDC targetDC, int xc, int yc, int x, int y, COLORREF c) {
 }
 
 void DrawDirectEllipse(HDC targetDC, int xc, int yc, int a, int b, COLORREF color) {
-    // Region 1: dx/dy > -1 (i.e., |slope| < 1)
     int x = 0;
     int y = b;
     double a2 = static_cast<double>(a * a);
     double b2 = static_cast<double>(b * b);
 
     Draw4Points(targetDC, xc, yc, x, y, color);
-    while (b2 * x <= a2 * y) { // Stop when slope is -1
+    while (b2 * x <= a2 * y) {
         x++;
         y = Round(b * sqrt(1.0 - (x * x) / a2));
         Draw4Points(targetDC, xc, yc, x, y, color);
     }
 
-    // Region 2: dx/dy < -1 (i.e., |slope| > 1)
     x = a;
     y = 0;
     Draw4Points(targetDC, xc, yc, x, y, color);
-    while (b2 * x > a2 * y) { // Continue until slope is -1 again
+    while (b2 * x > a2 * y) {
         y++;
         x = Round(a * sqrt(1.0 - (y * y) / b2));
         Draw4Points(targetDC, xc, yc, x, y, color);
     }
 }
-
 
 void DrawPolarEllipse(HDC targetDC, int xc, int yc, int a, int b, COLORREF color) {
     double dtheta = 1.0 / max(a, b);
@@ -509,7 +516,6 @@ void DrawMidpointEllipse(HDC targetDC, int xc, int yc, int a, int b, COLORREF co
     long long dx = 0;
     long long dy = twoA2 * b;
 
-    // Region 1
     p = round(b2 - a2 * b + 0.25 * a2);
     while (dx < dy) {
         Draw4Points(targetDC, xc, yc, x, y, color);
@@ -525,7 +531,6 @@ void DrawMidpointEllipse(HDC targetDC, int xc, int yc, int a, int b, COLORREF co
         }
     }
 
-    // Region 2
     p = round(b2 * (x + 0.5) * (x + 0.5) + a2 * (y - 1) * (y - 1) - a2 * b2);
     while (y >= 0) {
         Draw4Points(targetDC, xc, yc, x, y, color);
@@ -542,29 +547,20 @@ void DrawMidpointEllipse(HDC targetDC, int xc, int yc, int a, int b, COLORREF co
     }
 }
 
+// ----------------- Fill Algorithms -----------------
 
-// --- Flood Fill Algorithms ---
 void FloodFillRecursive(HDC targetDC, int x, int y, COLORREF fillColor, COLORREF targetColor) {
     if (x < 0 || x >= clientRect.right || y < 0 || y >= clientRect.bottom) {
-        return; // Out of bounds
+        return;
     }
 
     COLORREF currentPxColor = GetPixel(targetDC, x, y);
-
-    // If the current pixel is NOT the targetColor, or if it's already the fillColor, stop.
-    // The key change is to ensure we only proceed if currentPxColor IS the targetColor.
-    if (currentPxColor != targetColor) {
-        return; // This pixel is either a boundary or already filled with the new color, or some other color.
-    }
-    // If the targetColor and fillColor are the same, this will also act as a stop condition
-    // and prevent an infinite loop (if currentPxColor is already fillColor).
-    if (currentPxColor == fillColor) { // Redundant if the previous check handles all non-target colors, but good for clarity for a specific case.
+    if (currentPxColor != targetColor || currentPxColor == fillColor) {
         return;
     }
 
     SetPixelSafe(targetDC, x, y, fillColor);
 
-    // Recursively call for neighbors
     FloodFillRecursive(targetDC, x + 1, y, fillColor, targetColor);
     FloodFillRecursive(targetDC, x - 1, y, fillColor, targetColor);
     FloodFillRecursive(targetDC, x, y + 1, fillColor, targetColor);
@@ -572,19 +568,9 @@ void FloodFillRecursive(HDC targetDC, int x, int y, COLORREF fillColor, COLORREF
 }
 
 void FloodFillNRecursive(HDC targetDC, int x, int y, COLORREF initialPixelColor, COLORREF fillColor) {
-    // Note: The 'boundaryColor' parameter name in your original NRecursive function is misleading
-    // for a true seed fill, as it primarily works based on the initialPixelColor.
-    // I've renamed it here for clarity for a seed fill.
-    // If you intend a boundary fill, the logic needs to be different.
-
-    // Get the color at the initial seed point *before* starting the stack.
-    // This `initialPixelColor` should be the color that the fill will replace.
-    // This is what `targetColor` was in the recursive version.
-
-    // Safety check for initial pixel outside bounds or already filled
     if (x < 0 || x >= clientRect.right || y < 0 || y >= clientRect.bottom) return;
     COLORREF clickedColor = GetPixel(targetDC, x, y);
-    if (clickedColor == fillColor) return; // If the clicked point is already the fill color, do nothing.
+    if (clickedColor == fillColor) return;
 
     std::stack<POINT> s;
     s.push({ x, y });
@@ -593,22 +579,16 @@ void FloodFillNRecursive(HDC targetDC, int x, int y, COLORREF initialPixelColor,
         POINT p = s.top();
         s.pop();
 
-        // Boundary and color check for the current pixel from the stack
         if (p.x < 0 || p.x >= clientRect.right || p.y < 0 || p.y >= clientRect.bottom) {
-            continue; // Out of bounds, skip
+            continue;
         }
 
         COLORREF currentPxColor = GetPixel(targetDC, p.x, p.y);
-
-        // Only fill if current pixel is the original color of the area to be filled
-        // and not already filled with the new color.
-        if (currentPxColor != clickedColor || currentPxColor == fillColor) { // Use 'clickedColor' as the target
+        if (currentPxColor != clickedColor || currentPxColor == fillColor) {
             continue;
         }
 
         SetPixelSafe(targetDC, p.x, p.y, fillColor);
-
-        // Push neighbors onto stack
         s.push({ p.x + 1, p.y });
         s.push({ p.x - 1, p.y });
         s.push({ p.x, p.y + 1 });
@@ -616,11 +596,10 @@ void FloodFillNRecursive(HDC targetDC, int x, int y, COLORREF initialPixelColor,
     }
 }
 
-// --- Curve Algorithms ---
+// ----------------- Curve Algorithms -----------------
+
 void DrawCardinalSpline(HDC targetDC, const std::vector<POINT>& points, double tension, COLORREF color) {
-    if (points.size() < 4) {
-        return;
-    }
+    if (points.size() < 4) return;
 
     double s = 0.5 * (1.0 - tension);
 
@@ -654,14 +633,115 @@ void DrawCardinalSpline(HDC targetDC, const std::vector<POINT>& points, double t
     }
 }
 
-// --- Function to redraw all stored shapes to the backing buffer ---
+// ----------------- Polygon Algorithms -----------------
+
+void DrawPolygonOutline(HDC hdc, const std::vector<POINT>& polygon, COLORREF color) {
+    if (polygon.empty()) return;
+    HPEN hPen = CreatePen(PS_SOLID, 1, color);
+    HPEN hOldPen = (HPEN)SelectObject(hdc, hPen);
+
+    MoveToEx(hdc, polygon[0].x, polygon[0].y, NULL);
+    for (size_t i = 1; i < polygon.size(); i++) {
+        LineTo(hdc, polygon[i].x, polygon[i].y);
+    }
+    LineTo(hdc, polygon[0].x, polygon[0].y); // Close the shape
+
+    SelectObject(hdc, hOldPen);
+    DeleteObject(hPen);
+}
+
+void ScanlineFill(HDC hdc, const std::vector<POINT>& polygon, COLORREF fillColor) {
+    if (polygon.size() < 3) return;
+
+    // 1. Find y-range of polygon
+    int ymin = polygon[0].y, ymax = polygon[0].y;
+    for (const auto& p : polygon) {
+        ymin = min(ymin, p.y);
+        ymax = max(ymax, p.y);
+    }
+
+    // Clip to client area
+    // Make sure clientRect is accessible (it appears to be a global in your code)
+    ymin = max(ymin, 0);
+    ymax = min(ymax, clientRect.bottom - 1);
+
+    // 2. Process each scanline
+    for (int y = ymin; y <= ymax; y++) {
+        std::vector<int> intersections;
+
+        // 3. Find all edge intersections
+        for (size_t i = 0; i < polygon.size(); i++) {
+            const POINT& p1 = polygon[i];
+            const POINT& p2 = polygon[(i + 1) % polygon.size()];
+
+            // Make sure p1 always refers to the point with the smaller y-coordinate
+            // to simplify the intersection logic.
+            POINT startP = p1;
+            POINT endP = p2;
+
+            if (startP.y > endP.y) {
+                std::swap(startP, endP);
+            }
+
+            // Skip horizontal edges - they don't contribute to scanline intersections for filling
+            if (startP.y == endP.y) continue;
+
+            // Check if the scanline y crosses this edge.
+            // This condition correctly handles vertices to avoid double counting or missing points.
+            // It includes the lower endpoint of an edge and excludes the upper endpoint.
+            if (y >= startP.y && y < endP.y) {
+                // Calculate intersection x-coordinate using floating point for precision
+                float x = startP.x + (float)(y - startP.y) * (endP.x - startP.x) / (float)(endP.y - startP.y);
+                intersections.push_back((int)round(x)); // Round to nearest integer pixel
+            }
+        }
+
+        // 4. Sort intersections
+        std::sort(intersections.begin(), intersections.end());
+
+        // Debugging: Print intersections for current scanline
+        // std::wcout << L"Scanline Y: " << y << L", Intersections: ";
+        // for (int x_val : intersections) {
+        //     std::wcout << x_val << L" ";
+        // }
+        // std::wcout << std::endl;
+
+
+        // 5. Fill between pairs of intersections
+        // You must have an even number of intersections for a valid polygon fill
+        if (intersections.size() % 2 != 0) {
+            // This indicates a problem with the polygon or the intersection logic
+            // It's a common debugging point.
+            // std::wcout << L"Warning: Odd number of intersections for scanline " << y << std::endl;
+            // You might want to skip filling this scanline or log an error.
+            continue; // Skip filling this scanline if intersections are odd
+        }
+
+        for (size_t i = 0; i + 1 < intersections.size(); i += 2) {
+            int x1 = max(0, intersections[i]);
+            int x2 = min(clientRect.right - 1, intersections[i + 1]);
+
+            // Ensure x1 is not greater than x2 (can happen with very thin polygons or rounding)
+            if (x1 > x2) continue;
+
+            // Draw horizontal line segment
+            for (int x = x1; x <= x2; x++) {
+                SetPixelSafe(hdc, x, y, fillColor);
+            }
+        }
+    }
+}
+
+
+// =============================================
+// Drawing Management
+// =============================================
+
 void RedrawAllShapesToBitmap(HDC targetDC) {
-    // 1. Clear the bitmap with the current background color
     HBRUSH hBackgroundBrush = CreateSolidBrush(bgColor);
     FillRect(targetDC, &clientRect, hBackgroundBrush);
     DeleteObject(hBackgroundBrush);
 
-    // 2. Redraw all shapes
     for (const auto& shape : drawnShapes) {
         switch (shape.type) {
         case SHAPE_LINE:
@@ -689,27 +769,30 @@ void RedrawAllShapesToBitmap(HDC targetDC) {
             }
             break;
         case SHAPE_FILLED_REGION:
-            // IMPORTANT: For flood fill, re-running the algorithm on every repaint assumes the
-            // 'targetColor' (the original color of the seed pixel) is still the same on the bitmap.
-            // If you draw new shapes on top, this might not work perfectly.
-            // A true persistent flood fill might involve saving the pixel data of the filled region itself,
-            // or ensure that fills are always the last drawn elements, or that boundaries are always fixed.
-            // For this example, we re-run the fill.
             if (shape.filledRegion.algo == FILL_ALGO_RECURSIVE) {
+                // For recursive, targetColor is the original color to be replaced
                 FloodFillRecursive(targetDC, shape.filledRegion.seedPoint.x, shape.filledRegion.seedPoint.y, shape.filledRegion.fillColor, shape.filledRegion.targetColor);
             }
-            else {
-                FloodFillNRecursive(targetDC, shape.filledRegion.seedPoint.x, shape.filledRegion.seedPoint.y, shape.filledRegion.boundaryColor, shape.filledRegion.fillColor);
+            else { // FILL_ALGO_NON_RECURSIVE
+                // For non-recursive, targetColor is the original color to be replaced
+                FloodFillNRecursive(targetDC, shape.filledRegion.seedPoint.x, shape.filledRegion.seedPoint.y, shape.filledRegion.targetColor, shape.filledRegion.fillColor);
             }
             break;
         case SHAPE_CARDINAL_SPLINE:
             DrawCardinalSpline(targetDC, shape.spline.points, shape.spline.tension, shape.spline.color);
             break;
+        case POLYGON_SHAPE:
+            ScanlineFill(targetDC, shape.polygon.points, shape.polygon.fillColor);
+            DrawPolygonOutline(targetDC, shape.polygon.points, shape.polygon.drawColor);
+            break;
         }
     }
 }
 
-// --- Save/Load Functions ---
+// =============================================
+// File Operations
+// =============================================
+
 void SaveShapesToFile(HWND hwnd) {
     OPENFILENAME ofn;
     wchar_t szFile[260];
@@ -718,7 +801,7 @@ void SaveShapesToFile(HWND hwnd) {
     ofn.hwndOwner = hwnd;
     ofn.lpstrFile = szFile;
     ofn.lpstrFile[0] = L'\0';
-    ofn.nMaxFile = sizeof(szFile);
+    ofn.nMaxFile = sizeof(szFile) / sizeof(szFile[0]); // Correct size calculation
     ofn.lpstrFilter = L"Drawing Files (*.drw)\0*.drw\0All Files (*.*)\0*.*\0";
     ofn.nFilterIndex = 1;
     ofn.Flags = OFN_PATHMUSTEXIST | OFN_OVERWRITEPROMPT;
@@ -748,12 +831,20 @@ void SaveShapesToFile(HWND hwnd) {
                 case SHAPE_FILLED_REGION:
                     outFile.write(reinterpret_cast<const char*>(&shape.filledRegion), sizeof(FilledRegionShape));
                     break;
-                case SHAPE_CARDINAL_SPLINE: {
+                case SHAPE_CARDINAL_SPLINE: { // Added curly braces for scope
                     size_t numPoints = shape.spline.points.size();
                     outFile.write(reinterpret_cast<const char*>(&numPoints), sizeof(numPoints));
                     outFile.write(reinterpret_cast<const char*>(shape.spline.points.data()), numPoints * sizeof(POINT));
                     outFile.write(reinterpret_cast<const char*>(&shape.spline.tension), sizeof(shape.spline.tension));
                     outFile.write(reinterpret_cast<const char*>(&shape.spline.color), sizeof(shape.spline.color));
+                    break;
+                }
+                case POLYGON_SHAPE: { // Corrected enum, added curly braces for scope, consistent binary write
+                    size_t numPoints = shape.polygon.points.size();
+                    outFile.write(reinterpret_cast<const char*>(&numPoints), sizeof(numPoints));
+                    outFile.write(reinterpret_cast<const char*>(shape.polygon.points.data()), numPoints * sizeof(POINT));
+                    outFile.write(reinterpret_cast<const char*>(&shape.polygon.drawColor), sizeof(shape.polygon.drawColor));
+                    outFile.write(reinterpret_cast<const char*>(&shape.polygon.fillColor), sizeof(shape.polygon.fillColor));
                     break;
                 }
                 }
@@ -775,7 +866,7 @@ void LoadShapesFromFile(HWND hwnd) {
     ofn.hwndOwner = hwnd;
     ofn.lpstrFile = szFile;
     ofn.lpstrFile[0] = L'\0';
-    ofn.nMaxFile = sizeof(szFile);
+    ofn.nMaxFile = sizeof(szFile) / sizeof(szFile[0]); // Correct size calculation
     ofn.lpstrFilter = L"Drawing Files (*.drw)\0*.drw\0All Files (*.*)\0*.*\0";
     ofn.nFilterIndex = 1;
     ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST;
@@ -783,14 +874,11 @@ void LoadShapesFromFile(HWND hwnd) {
     if (GetOpenFileName(&ofn) == TRUE) {
         std::ifstream inFile(ofn.lpstrFile, std::ios::binary);
         if (inFile.is_open()) {
-            drawnShapes.clear(); // Clear existing shapes
+            drawnShapes.clear();
 
             inFile.read(reinterpret_cast<char*>(&drawColor), sizeof(drawColor));
             inFile.read(reinterpret_cast<char*>(&fillColor), sizeof(fillColor));
             inFile.read(reinterpret_cast<char*>(&bgColor), sizeof(bgColor));
-
-            // Update background in the backing buffer immediately
-            RedrawAllShapesToBitmap(hMemDC); // Clear with new BG and redraw existing (empty for now)
 
             size_t numShapes;
             inFile.read(reinterpret_cast<char*>(&numShapes), sizeof(numShapes));
@@ -812,21 +900,30 @@ void LoadShapesFromFile(HWND hwnd) {
                 case SHAPE_FILLED_REGION:
                     inFile.read(reinterpret_cast<char*>(&newShape.filledRegion), sizeof(FilledRegionShape));
                     break;
-                case SHAPE_CARDINAL_SPLINE: {
-                    size_t numPoints;
+                case SHAPE_CARDINAL_SPLINE: { // Added curly braces for scope
+                    size_t numPoints; // Correctly scoped
                     inFile.read(reinterpret_cast<char*>(&numPoints), sizeof(numPoints));
-                    newShape.spline.points.resize(numPoints); // Resize vector before reading
+                    newShape.spline.points.resize(numPoints);
                     inFile.read(reinterpret_cast<char*>(newShape.spline.points.data()), numPoints * sizeof(POINT));
                     inFile.read(reinterpret_cast<char*>(&newShape.spline.tension), sizeof(newShape.spline.tension));
                     inFile.read(reinterpret_cast<char*>(&newShape.spline.color), sizeof(newShape.spline.color));
+                    break;
+                }
+                case POLYGON_SHAPE: { // Corrected enum, added curly braces for scope, consistent binary read
+                    size_t numPoints; // Correctly scoped
+                    inFile.read(reinterpret_cast<char*>(&numPoints), sizeof(numPoints));
+                    newShape.polygon.points.resize(numPoints);
+                    inFile.read(reinterpret_cast<char*>(newShape.polygon.points.data()), numPoints * sizeof(POINT));
+                    inFile.read(reinterpret_cast<char*>(&newShape.polygon.drawColor), sizeof(newShape.polygon.drawColor));
+                    inFile.read(reinterpret_cast<char*>(&newShape.polygon.fillColor), sizeof(newShape.polygon.fillColor));
                     break;
                 }
                 }
                 drawnShapes.push_back(newShape);
             }
             inFile.close();
-            RedrawAllShapesToBitmap(hMemDC); // Redraw all loaded shapes onto the bitmap
-            InvalidateRect(hwnd, NULL, FALSE); // Just invalidate, WM_PAINT will blit
+            RedrawAllShapesToBitmap(hMemDC);
+            InvalidateRect(hwnd, NULL, FALSE);
             std::wcout << L"Drawing loaded from: " << ofn.lpstrFile << std::endl;
         }
         else {
@@ -835,8 +932,135 @@ void LoadShapesFromFile(HWND hwnd) {
     }
 }
 
+// =============================================
+// Menu Functions
+// =============================================
 
-// --- Window Procedure ---
+void CreateMainMenu(HWND hwnd) {
+    HMENU hMenu = CreateMenu();
+    HMENU hFileMenu = CreatePopupMenu();
+    HMENU hColorsMenu = CreatePopupMenu();
+    HMENU hDrawColorMenu = CreatePopupMenu();
+    HMENU hFillColorMenu = CreatePopupMenu();
+    HMENU hBgColorMenu = CreatePopupMenu();
+    HMENU hShapesMenu = CreatePopupMenu();
+    HMENU hLineEditMenu = CreatePopupMenu();
+    HMENU hCircleEditMenu = CreatePopupMenu();
+    HMENU hEllipseEditMenu = CreatePopupMenu();
+    HMENU hFillMenu = CreatePopupMenu();
+    HMENU hCurveMenu = CreatePopupMenu();
+    HMENU hEditMenu = CreatePopupMenu();
+    HMENU hOptionsMenu = CreatePopupMenu();
+    HMENU hCursorMenu = CreatePopupMenu();
+    HMENU hSubMenuPolygons = CreatePopupMenu();
+
+    // File Menu
+    AppendMenu(hMenu, MF_POPUP, (UINT_PTR)hFileMenu, L"&File");
+    AppendMenu(hFileMenu, MF_STRING, 1001, L"&New");
+    AppendMenu(hFileMenu, MF_STRING, 1002, L"&Open...");
+    AppendMenu(hFileMenu, MF_STRING, 1003, L"&Save...");
+    AppendMenu(hFileMenu, MF_SEPARATOR, 0, NULL);
+    AppendMenu(hFileMenu, MF_STRING, 1004, L"E&xit");
+
+    // Colors Menu (main)
+    AppendMenu(hMenu, MF_POPUP, (UINT_PTR)hColorsMenu, L"&Colors");
+
+    // Drawing Color Submenu
+    AppendMenu(hColorsMenu, MF_POPUP, (UINT_PTR)hDrawColorMenu, L"&Drawing Color");
+    AppendMenu(hDrawColorMenu, MF_STRING, 2101, L"&Red");
+    AppendMenu(hDrawColorMenu, MF_STRING, 2102, L"&Green");
+    AppendMenu(hDrawColorMenu, MF_STRING, 2103, L"&Blue");
+    AppendMenu(hDrawColorMenu, MF_STRING, 2104, L"&Black");
+    AppendMenu(hDrawColorMenu, MF_STRING, 2105, L"&Yellow");
+    AppendMenu(hDrawColorMenu, MF_STRING, 2106, L"&Magenta");
+    AppendMenu(hDrawColorMenu, MF_STRING, 2107, L"&Cyan");
+    AppendMenu(hDrawColorMenu, MF_SEPARATOR, 0, NULL);
+    AppendMenu(hDrawColorMenu, MF_STRING, 2108, L"&Dark Red");
+    AppendMenu(hDrawColorMenu, MF_STRING, 2109, L"&Dark Green");
+    AppendMenu(hDrawColorMenu, MF_STRING, 2110, L"&Dark Blue");
+    AppendMenu(hDrawColorMenu, MF_SEPARATOR, 0, NULL);
+    AppendMenu(hDrawColorMenu, MF_STRING, 2111, L"&Custom Color...");
+
+    // Fill Color Submenu
+    AppendMenu(hColorsMenu, MF_POPUP, (UINT_PTR)hFillColorMenu, L"&Fill Color");
+    AppendMenu(hFillColorMenu, MF_STRING, 2201, L"&Red");
+    AppendMenu(hFillColorMenu, MF_STRING, 2202, L"&Green");
+    AppendMenu(hFillColorMenu, MF_STRING, 2203, L"&Blue");
+    AppendMenu(hFillColorMenu, MF_STRING, 2204, L"&Black");
+    AppendMenu(hFillColorMenu, MF_STRING, 2205, L"&Yellow");
+    AppendMenu(hFillColorMenu, MF_STRING, 2206, L"&Magenta");
+    AppendMenu(hFillColorMenu, MF_STRING, 2207, L"&Cyan");
+    AppendMenu(hFillColorMenu, MF_SEPARATOR, 0, NULL);
+    AppendMenu(hFillColorMenu, MF_STRING, 2208, L"&Dark Red");
+    AppendMenu(hFillColorMenu, MF_STRING, 2209, L"&Dark Green");
+    AppendMenu(hFillColorMenu, MF_STRING, 2210, L"&Dark Blue");
+    AppendMenu(hFillColorMenu, MF_SEPARATOR, 0, NULL);
+    AppendMenu(hFillColorMenu, MF_STRING, 2211, L"&Custom Color...");
+
+    // Background Color Submenu
+    AppendMenu(hColorsMenu, MF_POPUP, (UINT_PTR)hBgColorMenu, L"&Background Color");
+    AppendMenu(hBgColorMenu, MF_STRING, 2301, L"&White");
+    AppendMenu(hBgColorMenu, MF_STRING, 2302, L"&Light Gray");
+    AppendMenu(hBgColorMenu, MF_STRING, 2303, L"&Gray");
+    AppendMenu(hBgColorMenu, MF_STRING, 2304, L"&Black");
+    AppendMenu(hBgColorMenu, MF_STRING, 2305, L"&Red");
+    AppendMenu(hBgColorMenu, MF_STRING, 2306, L"&Green");
+    AppendMenu(hBgColorMenu, MF_STRING, 2307, L"&Blue");
+    AppendMenu(hBgColorMenu, MF_SEPARATOR, 0, NULL);
+    AppendMenu(hBgColorMenu, MF_STRING, 2308, L"&Custom Color...");
+
+    // Shapes Menu
+    AppendMenu(hMenu, MF_POPUP, (UINT_PTR)hShapesMenu, L"&Shapes");
+
+    AppendMenu(hShapesMenu, MF_POPUP, (UINT_PTR)hLineEditMenu, L"&Line");
+    AppendMenu(hLineEditMenu, MF_STRING, 3001, L"&Bresenham");
+    AppendMenu(hLineEditMenu, MF_STRING, 3002, L"&DDA");
+    AppendMenu(hLineEditMenu, MF_STRING, 3003, L"&Midpoint");
+    AppendMenu(hLineEditMenu, MF_STRING, 3004, L"&Parametric");
+
+    AppendMenu(hShapesMenu, MF_POPUP, (UINT_PTR)hCircleEditMenu, L"&Circle");
+    AppendMenu(hCircleEditMenu, MF_STRING, 4001, L"&Direct");
+    AppendMenu(hCircleEditMenu, MF_STRING, 4002, L"&Polar");
+    AppendMenu(hCircleEditMenu, MF_STRING, 4003, L"&Iterative Polar");
+    AppendMenu(hCircleEditMenu, MF_STRING, 4004, L"&Midpoint");
+    AppendMenu(hCircleEditMenu, MF_STRING, 4005, L"&Modified Midpoint");
+
+    AppendMenu(hShapesMenu, MF_POPUP, (UINT_PTR)hEllipseEditMenu, L"&Ellipse");
+    AppendMenu(hEllipseEditMenu, MF_STRING, 5001, L"&Direct");
+    AppendMenu(hEllipseEditMenu, MF_STRING, 5002, L"&Polar");
+    AppendMenu(hEllipseEditMenu, MF_STRING, 5003, L"&Midpoint");
+
+    AppendMenu(hShapesMenu, MF_POPUP, (UINT_PTR)hFillMenu, L"&Fill");
+    AppendMenu(hFillMenu, MF_STRING, 6001, L"&Recursive Flood Fill");
+    AppendMenu(hFillMenu, MF_STRING, 6002, L"&Non-Recursive Flood Fill");
+
+    AppendMenu(hShapesMenu, MF_POPUP, (UINT_PTR)hCurveMenu, L"&Curves");
+    AppendMenu(hCurveMenu, MF_STRING, 7001, L"&Cardinal Spline (4+ points, right click to finish)");
+
+    // Shapes Menu - Polygons (New)
+    AppendMenu(hSubMenuPolygons, MF_STRING, 7101, L"Draw Polygon"); 
+    AppendMenu(hShapesMenu, MF_POPUP, (UINT_PTR)hSubMenuPolygons, L"&Polygons");
+
+    // Edit Menu
+    AppendMenu(hMenu, MF_POPUP, (UINT_PTR)hEditMenu, L"&Edit");
+    AppendMenu(hEditMenu, MF_STRING, 8001, L"&Clear Screen");
+
+    // Options Menu (for cursors, etc.)
+    AppendMenu(hMenu, MF_POPUP, (UINT_PTR)hOptionsMenu, L"&Options");
+    AppendMenu(hOptionsMenu, MF_POPUP, (UINT_PTR)hCursorMenu, L"Change &Mouse Cursor");
+    AppendMenu(hCursorMenu, MF_STRING, 9001, L"&Arrow");
+    AppendMenu(hCursorMenu, MF_STRING, 9002, L"&Hand");
+    AppendMenu(hCursorMenu, MF_STRING, 9003, L"&Wait");
+    AppendMenu(hCursorMenu, MF_STRING, 9004, L"&Cross");
+    AppendMenu(hCursorMenu, MF_STRING, 9005, L"&Help");
+
+    SetMenu(hwnd, hMenu);
+}
+
+// =============================================
+// Window Procedure
+// =============================================
+
 LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) {
     HDC hdc;
     PAINTSTRUCT ps;
@@ -925,7 +1149,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         case 2101: drawColor = RGB(255, 0, 0); std::wcout << L"Drawing Color: Red" << std::endl; break;
         case 2102: drawColor = RGB(0, 255, 0); std::wcout << L"Drawing Color: Green" << std::endl; break;
         case 2103: drawColor = RGB(0, 0, 255); std::wcout << L"Drawing Color: Blue" << std::endl; break;
-        case 2104: drawColor = RGB(0, 0, 0);   std::wcout << L"Drawing Color: Black" << std::endl; break;
+        case 2104: drawColor = RGB(0, 0, 0);    std::wcout << L"Drawing Color: Black" << std::endl; break;
         case 2105: drawColor = RGB(255, 255, 0); std::wcout << L"Drawing Color: Yellow" << std::endl; break;
         case 2106: drawColor = RGB(255, 0, 255); std::wcout << L"Drawing Color: Magenta" << std::endl; break;
         case 2107: drawColor = RGB(0, 255, 255); std::wcout << L"Drawing Color: Cyan" << std::endl; break;
@@ -953,7 +1177,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         case 2201: fillColor = RGB(255, 0, 0); std::wcout << L"Fill Color: Red" << std::endl; break;
         case 2202: fillColor = RGB(0, 255, 0); std::wcout << L"Fill Color: Green" << std::endl; break;
         case 2203: fillColor = RGB(0, 0, 255); std::wcout << L"Fill Color: Blue" << std::endl; break;
-        case 2204: fillColor = RGB(0, 0, 0);   std::wcout << L"Fill Color: Black" << std::endl; break;
+        case 2204: fillColor = RGB(0, 0, 0);    std::wcout << L"Fill Color: Black" << std::endl; break;
         case 2205: fillColor = RGB(255, 255, 0); std::wcout << L"Fill Color: Yellow" << std::endl; break;
         case 2206: fillColor = RGB(255, 0, 255); std::wcout << L"Fill Color: Magenta" << std::endl; break;
         case 2207: fillColor = RGB(0, 255, 255); std::wcout << L"Fill Color: Cyan" << std::endl; break;
@@ -1029,6 +1253,14 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             // Shapes Menu - Curves
         case 7001: drawingMode = MODE_CARDINAL_SPLINE; controlPoints.clear(); SetCursor(hCursorCross); std::wcout << L"Mode: Cardinal Spline (Click for points, Right-click to finish)" << std::endl; break;
 
+            // Shapes Menu - Polygons
+        case 7101: 
+            drawingMode = MODE_DRAW_POLYGON;
+            controlPoints.clear();
+            SetCursor(hCursorCross);
+            std::wcout << L"Mode: Draw Polygon (Click for points, Right-click to finish)" << std::endl;
+            break;
+
             // Edit Menu
         case 8001: // Clear Screen
             drawnShapes.clear();
@@ -1058,7 +1290,6 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         startPoint.y = HIWORD(lParam);
         isDrawing = true;
 
-        // Inside WM_LBUTTONDOWN:
         if (drawingMode == MODE_FLOOD_FILL) {
             COLORREF targetColor = GetPixel(hMemDC, startPoint.x, startPoint.y); // Get original color of clicked point
 
@@ -1073,22 +1304,18 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             newShape.filledRegion.seedPoint = startPoint;
             newShape.filledRegion.fillColor = fillColor;
             newShape.filledRegion.algo = fillAlgorithm;
+            newShape.filledRegion.targetColor = targetColor; // Store original color for re-draw
 
             if (fillAlgorithm == FILL_ALGO_RECURSIVE) {
-                newShape.filledRegion.targetColor = targetColor; // Correct for recursive
                 FloodFillRecursive(hMemDC, startPoint.x, startPoint.y, fillColor, targetColor);
             }
             else { // FILL_ALGO_NON_RECURSIVE
-                // For non-recursive *seed fill*, the parameter 'targetColor' is what the fill replaces.
-                newShape.filledRegion.targetColor = targetColor; // Store original color for re-draw
-                // Note: I removed boundaryColor, as this is a seed fill.
-                // If you truly want a boundary fill, the algorithm changes.
                 FloodFillNRecursive(hMemDC, startPoint.x, startPoint.y, targetColor, fillColor);
             }
             drawnShapes.push_back(newShape);
             InvalidateRect(hwnd, NULL, FALSE); // Invalidate to trigger WM_PAINT and blit
         }
-        else if (drawingMode == MODE_CARDINAL_SPLINE) {
+        else if (drawingMode == MODE_CARDINAL_SPLINE || drawingMode == MODE_DRAW_POLYGON) {
             controlPoints.push_back(startPoint);
             // Redraw to show the placed control point
             InvalidateRect(hwnd, NULL, FALSE);
@@ -1097,7 +1324,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         break;
 
     case WM_MOUSEMOVE:
-        if (isDrawing && drawingMode != MODE_FLOOD_FILL && drawingMode != MODE_CARDINAL_SPLINE) {
+        if (isDrawing && drawingMode != MODE_FLOOD_FILL && drawingMode != MODE_CARDINAL_SPLINE && drawingMode != MODE_DRAW_POLYGON) {
             endPoint.x = LOWORD(lParam);
             endPoint.y = HIWORD(lParam);
             InvalidateRect(hwnd, NULL, FALSE); // Invalidate to draw the preview, but not clear entire window
@@ -1105,7 +1332,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         break;
 
     case WM_LBUTTONUP:
-        if (isDrawing && drawingMode != MODE_FLOOD_FILL && drawingMode != MODE_CARDINAL_SPLINE) {
+        if (isDrawing && drawingMode != MODE_FLOOD_FILL && drawingMode != MODE_CARDINAL_SPLINE && drawingMode != MODE_DRAW_POLYGON) {
             endPoint.x = LOWORD(lParam);
             endPoint.y = HIWORD(lParam);
             isDrawing = false;
@@ -1162,7 +1389,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         SetCursor(hCursorArrow); // Reset cursor after drawing
         break;
 
-    case WM_RBUTTONDOWN: // Right click to finalize spline drawing
+    case WM_RBUTTONDOWN: // Right click to finalize spline or polygon drawing
         if (drawingMode == MODE_CARDINAL_SPLINE) {
             if (controlPoints.size() >= 4) {
                 DrawnShape newShape;
@@ -1189,8 +1416,43 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 drawingMode = MODE_NONE;
                 SetCursor(hCursorArrow);
             }
+            return 0; // Important: Return 0 to indicate we handled the message
         }
-        break;
+        else if (drawingMode == MODE_DRAW_POLYGON) {
+            if (controlPoints.size() >= 3) { // Need at least 3 points for a polygon
+                DrawnShape newShape;
+                newShape.type = POLYGON_SHAPE;
+                newShape.polygon.points = controlPoints;
+                newShape.polygon.drawColor = drawColor;
+                newShape.polygon.fillColor = fillColor;
+
+                // Fill the polygon first (so outline draws on top)
+                ScanlineFill(hMemDC, newShape.polygon.points, newShape.polygon.fillColor);
+
+                // Draw the outline
+                DrawPolygonOutline(hMemDC, newShape.polygon.points, newShape.polygon.drawColor);
+
+                // Add to drawnShapes
+                drawnShapes.push_back(newShape);
+
+                // Reset
+                controlPoints.clear();
+                InvalidateRect(hwnd, NULL, FALSE);
+                drawingMode = MODE_NONE;
+                SetCursor(hCursorArrow);
+                std::wcout << L"Polygon drawn and filled." << std::endl;
+            }
+            else {
+                MessageBox(hwnd, L"Polygon requires at least 3 points.", L"Warning", MB_OK | MB_ICONWARNING);
+                controlPoints.clear();
+                RedrawAllShapesToBitmap(hMemDC);
+                InvalidateRect(hwnd, NULL, FALSE);
+                drawingMode = MODE_NONE;
+                SetCursor(hCursorArrow);
+            }
+            return 0; // Important: Return 0 to indicate we handled the message
+        }
+        break; // Only break if we didn't handle the message
 
     case WM_PAINT:
         hdc = BeginPaint(hwnd, &ps);
@@ -1200,16 +1462,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
 
         // Draw current in-progress shape (e.g., while dragging a line) directly onto the window HDC
         // This is for real-time feedback and will be overwritten by the next WM_PAINT or permanent draw.
-        if (isDrawing && drawingMode != MODE_FLOOD_FILL && drawingMode != MODE_CARDINAL_SPLINE) {
-            // Use a temporary XOR mode for preview if desired for flicker reduction
-            // int oldROP2 = SetROP2(hdc, R2_NOTXORPEN); // Set to XOR mode
-            // HPEN hPen = CreatePen(PS_SOLID, 1, drawColor);
-            // HPEN hOldPen = (HPEN)SelectObject(hdc, hPen);
-
+        if (isDrawing && drawingMode != MODE_FLOOD_FILL && drawingMode != MODE_CARDINAL_SPLINE && drawingMode != MODE_DRAW_POLYGON) {
             switch (drawingMode) {
             case MODE_DRAW_LINE:
-                // For line previews, you can simply draw them.
-                // Or use XOR mode for better flicker reduction for line drags.
                 DrawLine(hdc, startPoint.x, startPoint.y, endPoint.x, endPoint.y, drawColor);
                 break;
             case MODE_DRAW_CIRCLE: {
@@ -1224,9 +1479,6 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 break;
             }
             }
-            // SelectObject(hdc, hOldPen);
-            // DeleteObject(hPen);
-            // SetROP2(hdc, oldROP2); // Restore old ROP2
         }
         else if (drawingMode == MODE_CARDINAL_SPLINE) {
             // Draw control points directly to screen for preview
@@ -1237,6 +1489,24 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             // If enough points, draw preview spline (or just the points)
             if (controlPoints.size() >= 4) {
                 DrawCardinalSpline(hdc, controlPoints, 0.0, drawColor); // Preview with default tension, use drawColor
+            }
+        }
+        else if (drawingMode == MODE_DRAW_POLYGON) {
+            // Draw control points directly to screen for preview
+            for (const auto& p : controlPoints) {
+                SetPixelSafe(hdc, p.x, p.y, RGB(0, 0, 255)); // Blue for polygon control points
+                DrawDirectCircle(hdc, p.x, p.y, 2, RGB(0, 0, 255));
+            }
+            // Draw preview polygon outline
+            if (controlPoints.size() >= 2) {
+                DrawPolygonOutline(hdc, controlPoints, drawColor);
+                // Also draw a line from the last point to the current mouse position
+                if (isDrawing) { // only if mouse is pressed
+                    POINT currentMousePos;
+                    GetCursorPos(&currentMousePos);
+                    ScreenToClient(hwnd, &currentMousePos);
+                    DrawLine(hdc, controlPoints.back().x, controlPoints.back().y, currentMousePos.x, currentMousePos.y, drawColor);
+                }
             }
         }
 
@@ -1257,6 +1527,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         if (hBitmap) {
             DeleteObject(hBitmap); // Delete the bitmap
         }
+        FreeConsole(); // Free the console
         PostQuitMessage(0);
         break;
 
@@ -1266,125 +1537,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
     return 0;
 }
 
-// --- Menu Creation ---
-void CreateMainMenu(HWND hwnd) {
-    HMENU hMenu = CreateMenu();
-    HMENU hFileMenu = CreatePopupMenu();
-    HMENU hColorsMenu = CreatePopupMenu();
-    HMENU hDrawColorMenu = CreatePopupMenu();
-    HMENU hFillColorMenu = CreatePopupMenu();
-    HMENU hBgColorMenu = CreatePopupMenu();
-    HMENU hShapesMenu = CreatePopupMenu();
-    HMENU hLineEditMenu = CreatePopupMenu();
-    HMENU hCircleEditMenu = CreatePopupMenu();
-    HMENU hEllipseEditMenu = CreatePopupMenu();
-    HMENU hFillMenu = CreatePopupMenu();
-    HMENU hCurveMenu = CreatePopupMenu();
-    HMENU hEditMenu = CreatePopupMenu();
-    HMENU hOptionsMenu = CreatePopupMenu();
-    HMENU hCursorMenu = CreatePopupMenu();
-
-    // File Menu
-    AppendMenu(hMenu, MF_POPUP, (UINT_PTR)hFileMenu, L"&File");
-    AppendMenu(hFileMenu, MF_STRING, 1001, L"&New");
-    AppendMenu(hFileMenu, MF_STRING, 1002, L"&Open...");
-    AppendMenu(hFileMenu, MF_STRING, 1003, L"&Save...");
-    AppendMenu(hFileMenu, MF_SEPARATOR, 0, NULL);
-    AppendMenu(hFileMenu, MF_STRING, 1004, L"E&xit");
-
-    // Colors Menu (main)
-    AppendMenu(hMenu, MF_POPUP, (UINT_PTR)hColorsMenu, L"&Colors");
-
-    // Drawing Color Submenu
-    AppendMenu(hColorsMenu, MF_POPUP, (UINT_PTR)hDrawColorMenu, L"&Drawing Color");
-    AppendMenu(hDrawColorMenu, MF_STRING, 2101, L"&Red");
-    AppendMenu(hDrawColorMenu, MF_STRING, 2102, L"&Green");
-    AppendMenu(hDrawColorMenu, MF_STRING, 2103, L"&Blue");
-    AppendMenu(hDrawColorMenu, MF_STRING, 2104, L"&Black");
-    AppendMenu(hDrawColorMenu, MF_STRING, 2105, L"&Yellow");
-    AppendMenu(hDrawColorMenu, MF_STRING, 2106, L"&Magenta");
-    AppendMenu(hDrawColorMenu, MF_STRING, 2107, L"&Cyan");
-    AppendMenu(hDrawColorMenu, MF_SEPARATOR, 0, NULL);
-    AppendMenu(hDrawColorMenu, MF_STRING, 2108, L"&Dark Red");
-    AppendMenu(hDrawColorMenu, MF_STRING, 2109, L"&Dark Green");
-    AppendMenu(hDrawColorMenu, MF_STRING, 2110, L"&Dark Blue");
-    AppendMenu(hDrawColorMenu, MF_SEPARATOR, 0, NULL);
-    AppendMenu(hDrawColorMenu, MF_STRING, 2111, L"&Custom Color...");
-
-    // Fill Color Submenu
-    AppendMenu(hColorsMenu, MF_POPUP, (UINT_PTR)hFillColorMenu, L"&Fill Color");
-    AppendMenu(hFillColorMenu, MF_STRING, 2201, L"&Red");
-    AppendMenu(hFillColorMenu, MF_STRING, 2202, L"&Green");
-    AppendMenu(hFillColorMenu, MF_STRING, 2203, L"&Blue");
-    AppendMenu(hFillColorMenu, MF_STRING, 2204, L"&Black");
-    AppendMenu(hFillColorMenu, MF_STRING, 2205, L"&Yellow");
-    AppendMenu(hFillColorMenu, MF_STRING, 2206, L"&Magenta");
-    AppendMenu(hFillColorMenu, MF_STRING, 2207, L"&Cyan");
-    AppendMenu(hFillColorMenu, MF_SEPARATOR, 0, NULL);
-    AppendMenu(hFillColorMenu, MF_STRING, 2208, L"&Dark Red");
-    AppendMenu(hFillColorMenu, MF_STRING, 2209, L"&Dark Green");
-    AppendMenu(hFillColorMenu, MF_STRING, 2210, L"&Dark Blue");
-    AppendMenu(hFillColorMenu, MF_SEPARATOR, 0, NULL);
-    AppendMenu(hFillColorMenu, MF_STRING, 2211, L"&Custom Color...");
-
-    // Background Color Submenu
-    AppendMenu(hColorsMenu, MF_POPUP, (UINT_PTR)hBgColorMenu, L"&Background Color");
-    AppendMenu(hBgColorMenu, MF_STRING, 2301, L"&White");
-    AppendMenu(hBgColorMenu, MF_STRING, 2302, L"&Light Gray");
-    AppendMenu(hBgColorMenu, MF_STRING, 2303, L"&Gray");
-    AppendMenu(hBgColorMenu, MF_STRING, 2304, L"&Black");
-    AppendMenu(hBgColorMenu, MF_STRING, 2305, L"&Red");
-    AppendMenu(hBgColorMenu, MF_STRING, 2306, L"&Green");
-    AppendMenu(hBgColorMenu, MF_STRING, 2307, L"&Blue");
-    AppendMenu(hBgColorMenu, MF_SEPARATOR, 0, NULL);
-    AppendMenu(hBgColorMenu, MF_STRING, 2308, L"&Custom Color...");
-
-    // Shapes Menu
-    AppendMenu(hMenu, MF_POPUP, (UINT_PTR)hShapesMenu, L"&Shapes");
-
-    AppendMenu(hShapesMenu, MF_POPUP, (UINT_PTR)hLineEditMenu, L"&Line");
-    AppendMenu(hLineEditMenu, MF_STRING, 3001, L"&Bresenham");
-    AppendMenu(hLineEditMenu, MF_STRING, 3002, L"&DDA");
-    AppendMenu(hLineEditMenu, MF_STRING, 3003, L"&Midpoint");
-    AppendMenu(hLineEditMenu, MF_STRING, 3004, L"&Parametric");
-
-    AppendMenu(hShapesMenu, MF_POPUP, (UINT_PTR)hCircleEditMenu, L"&Circle");
-    AppendMenu(hCircleEditMenu, MF_STRING, 4001, L"&Direct");
-    AppendMenu(hCircleEditMenu, MF_STRING, 4002, L"&Polar");
-    AppendMenu(hCircleEditMenu, MF_STRING, 4003, L"&Iterative Polar");
-    AppendMenu(hCircleEditMenu, MF_STRING, 4004, L"&Midpoint");
-    AppendMenu(hCircleEditMenu, MF_STRING, 4005, L"&Modified Midpoint");
-
-    AppendMenu(hShapesMenu, MF_POPUP, (UINT_PTR)hEllipseEditMenu, L"&Ellipse");
-    AppendMenu(hEllipseEditMenu, MF_STRING, 5001, L"&Direct");
-    AppendMenu(hEllipseEditMenu, MF_STRING, 5002, L"&Polar");
-    AppendMenu(hEllipseEditMenu, MF_STRING, 5003, L"&Midpoint");
-
-    AppendMenu(hShapesMenu, MF_POPUP, (UINT_PTR)hFillMenu, L"&Fill");
-    AppendMenu(hFillMenu, MF_STRING, 6001, L"&Recursive Flood Fill");
-    AppendMenu(hFillMenu, MF_STRING, 6002, L"&Non-Recursive Flood Fill");
-
-    AppendMenu(hShapesMenu, MF_POPUP, (UINT_PTR)hCurveMenu, L"&Curves");
-    AppendMenu(hCurveMenu, MF_STRING, 7001, L"&Cardinal Spline (4+ points, right click to finish)");
-
-
-    // Edit Menu
-    AppendMenu(hMenu, MF_POPUP, (UINT_PTR)hEditMenu, L"&Edit");
-    AppendMenu(hEditMenu, MF_STRING, 8001, L"&Clear Screen");
-
-    // Options Menu (for cursors, etc.)
-    AppendMenu(hMenu, MF_POPUP, (UINT_PTR)hOptionsMenu, L"&Options");
-    AppendMenu(hOptionsMenu, MF_POPUP, (UINT_PTR)hCursorMenu, L"Change &Mouse Cursor");
-    AppendMenu(hCursorMenu, MF_STRING, 9001, L"&Arrow");
-    AppendMenu(hCursorMenu, MF_STRING, 9002, L"&Hand");
-    AppendMenu(hCursorMenu, MF_STRING, 9003, L"&Wait");
-    AppendMenu(hCursorMenu, MF_STRING, 9004, L"&Cross");
-    AppendMenu(hCursorMenu, MF_STRING, 9005, L"&Help");
-
-    SetMenu(hwnd, hMenu);
-}
-
-// --- Register Class ---
+// =============================================
+// Register Class
+// =============================================
 void RegisterMyClass(HINSTANCE hInstance) {
     WNDCLASSEX wc;
     wc.cbSize = sizeof(WNDCLASSEX);
@@ -1407,7 +1562,9 @@ void RegisterMyClass(HINSTANCE hInstance) {
     }
 }
 
-// --- WinMain ---
+// =============================================
+// WinMain
+// =============================================
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow) {
     RegisterMyClass(hInstance);
 
