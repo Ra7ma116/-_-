@@ -31,16 +31,16 @@ COLORREF drawColor = RGB(0, 0, 0);   // Default drawing color (black)
 COLORREF fillColor = RGB(255, 0, 0); // Default fill color (red)
 COLORREF bgColor = RGB(255, 255, 255); // Default background color (white)
 
-// Enums for drawing modes and algorithms
-enum DrawingMode {
-    MODE_NONE,
-    MODE_DRAW_LINE,
-    MODE_DRAW_CIRCLE,
-    MODE_DRAW_ELLIPSE,
-    MODE_FLOOD_FILL,
-    MODE_CARDINAL_SPLINE
-};
 
+// Enums for drawing modes and algorithms
+int selectedFillQuarter = 0;
+enum QuarterMenu {
+    IDM_QUARTER_ALL = 10001,
+    IDM_QUARTER_1, // Top-Right
+    IDM_QUARTER_2, // Top-Left
+    IDM_QUARTER_3, // Bottom-Left
+    IDM_QUARTER_4  // Bottom-Right
+};
 enum LineAlgoType {
     LINE_ALGO_BRESENHAM,
     LINE_ALGO_DDA,
@@ -66,12 +66,41 @@ enum FillAlgoType {
     FILL_ALGO_RECURSIVE,
     FILL_ALGO_NON_RECURSIVE
 };
+enum FilledCircleAlgorithm {
+    FILL_CIRCLE_ALGO_NONE, // Default or unselected
+    FILL_CIRCLE_LINES, // The original "lines from center" method
+    FILL_CIRCLE_CIRCLES, // The "circles by circles" method
 
+};
+enum ShapeType {
+    SHAPE_LINE,
+    SHAPE_CIRCLE,
+    SHAPE_ELLIPSE,
+    SHAPE_FILLED_REGION, // Note: Flood fill's re-drawing logic will still be tricky if the underlying
+    // pixels change, but with a backing buffer, it becomes consistent.
+    SHAPE_CARDINAL_SPLINE,
+    SHAPE_GDI_CIRCLE,           // For GDI Ellipse based circle
+    SHAPE_FILL_CIRCLE,
+    SHAPE_FILL_SQUARE_HERMIT
+};
+enum DrawingMode {
+    MODE_NONE,
+    MODE_DRAW_LINE,
+    MODE_DRAW_CIRCLE,
+    MODE_DRAW_ELLIPSE,
+    MODE_FLOOD_FILL,
+    MODE_CARDINAL_SPLINE,
+    MODE_FILL_SQUARE_HERMIT,
+    MODE_DRAW_GDI_CIRCLE, 
+    MODE_FILL_CIRCLE
+};
 DrawingMode drawingMode = MODE_NONE;
 LineAlgoType lineAlgorithm = LINE_ALGO_BRESENHAM; // Default line algo
 CircleAlgoType circleAlgorithm = CIRCLE_ALGO_MIDPOINT; // Default circle algo
 EllipseAlgoType ellipseAlgorithm = ELLIPSE_ALGO_MIDPOINT; // Default ellipse algo
 FillAlgoType fillAlgorithm = FILL_ALGO_NON_RECURSIVE; // Default fill algo
+FilledCircleAlgorithm filledCircleAlgorithm = FILL_CIRCLE_CIRCLES;
+
 
 bool isDrawing = false;
 POINT startPoint;
@@ -79,14 +108,8 @@ POINT endPoint;
 std::vector<POINT> controlPoints; // For Cardinal Spline
 
 // Structure to hold information about a drawn shape
-enum ShapeType {
-    SHAPE_LINE,
-    SHAPE_CIRCLE,
-    SHAPE_ELLIPSE,
-    SHAPE_FILLED_REGION, // Note: Flood fill's re-drawing logic will still be tricky if the underlying
-    // pixels change, but with a backing buffer, it becomes consistent.
-    SHAPE_CARDINAL_SPLINE
-};
+
+
 
 struct LineShape {
     POINT p1, p2;
@@ -126,6 +149,26 @@ struct SplineShape {
     COLORREF color;
 };
 
+struct GDICircleShape { // For GDI Ellipse based circle
+    POINT center;
+    int radius;
+    COLORREF color; // Color of the outline, GDI ellipse uses pen
+};
+
+
+struct FillCircleShape {
+    POINT center;
+    int radius;
+    int quarter; // 0 for all, 1-4 for specific quarters
+    COLORREF color;
+    FilledCircleAlgorithm algorithm; // 
+};
+
+struct FillSquareHermitShape {
+    RECT square;
+    COLORREF color;
+};
+
 struct DrawnShape {
     ShapeType type;
     union {
@@ -134,6 +177,9 @@ struct DrawnShape {
         EllipseShape ellipse;
         FilledRegionShape filledRegion;
         SplineShape spline; // SplineShape also uses vector, but handled specially
+        GDICircleShape gdiCircle; 
+        FillCircleShape fillCircleData;
+        FillSquareHermitShape fillSquareHermit;
     };
 
     // Default constructor
@@ -148,6 +194,7 @@ struct DrawnShape {
         case SHAPE_CIRCLE:
             circle = other.circle;
             break;
+
         case SHAPE_ELLIPSE:
             ellipse = other.ellipse;
             break;
@@ -161,6 +208,16 @@ struct DrawnShape {
             spline.tension = other.spline.tension;
             spline.color = other.spline.color;
             break;
+
+        case SHAPE_GDI_CIRCLE:
+            gdiCircle = other.gdiCircle;
+            break;
+        case SHAPE_FILL_CIRCLE: // <-- NEW: Handle unified filled circle
+            fillCircleData = other.fillCircleData;
+            break;
+        case SHAPE_FILL_SQUARE_HERMIT:
+            fillSquareHermit = other.fillSquareHermit;
+            break;
         }
     }
 
@@ -172,7 +229,6 @@ struct DrawnShape {
             if (type == SHAPE_CARDINAL_SPLINE) {
                 spline.~SplineShape(); // Explicitly call destructor
             }
-
             type = other.type;
             switch (type) {
             case SHAPE_LINE:
@@ -194,6 +250,15 @@ struct DrawnShape {
                 spline.tension = other.spline.tension;
                 spline.color = other.spline.color;
                 break;
+            case SHAPE_GDI_CIRCLE:
+                gdiCircle = other.gdiCircle;
+                break;
+            case SHAPE_FILL_CIRCLE: // <-- NEW: Handle unified filled circle
+                fillCircleData = other.fillCircleData;
+                break;
+            case SHAPE_FILL_SQUARE_HERMIT:
+                fillSquareHermit = other.fillSquareHermit;
+                break;
             }
         }
         return *this;
@@ -204,6 +269,7 @@ struct DrawnShape {
         if (type == SHAPE_CARDINAL_SPLINE) {
             spline.~SplineShape(); // Explicitly call destructor for std::vector
         }
+       
     }
 };
 
@@ -226,6 +292,9 @@ void swapPoints(POINT& p1, POINT& p2) {
     POINT temp = p1;
     p1 = p2;
     p2 = temp;
+}
+int CalculateDistance(POINT p1, POINT p2) {
+    return static_cast<int>(sqrt(pow(p2.x - p1.x, 2) + pow(p2.y - p1.y, 2)));
 }
 
 // --- General Drawing Functions (all now take HDC targetDC) ---
@@ -654,6 +723,139 @@ void DrawCardinalSpline(HDC targetDC, const std::vector<POINT>& points, double t
     }
 }
 
+void DrawCircleOutline(HDC hdc, int x, int y, int radius, COLORREF color) {
+   
+    Ellipse(hdc, x - radius, y - radius, x + radius, y + radius);
+
+}
+
+void DrawFilledCircle(HDC hdc, int xc, int yc, int radius, int quarter, COLORREF color, FilledCircleAlgorithm algorithm) {
+
+    switch (algorithm) {
+    case FILL_CIRCLE_LINES:
+    {
+        int startAngle = 0;
+        int endAngle = 360;
+        if (quarter == 1) { startAngle = 0; endAngle = 90; }
+        else if (quarter == 2) { startAngle = 90; endAngle = 180; }
+        else if (quarter == 3) { startAngle = 180; endAngle = 270; }
+        else if (quarter == 4) { startAngle = 270; endAngle = 360; }
+
+        for (int angle = startAngle; angle <= endAngle; angle += 1) {
+            double rad = angle * M_PI / 180.0;
+            int xEnd = xc + (int)(radius * cos(rad));
+            int yEnd = yc - (int)(radius * sin(rad)); // Y-axis inversion for GDI
+
+            MoveToEx(hdc, xc, yc, NULL);
+            LineTo(hdc, xEnd, yEnd);
+        }
+    }
+    break;
+
+    case FILL_CIRCLE_CIRCLES:
+    {
+
+        int startAngle = 0;
+        int endAngle = 360;
+        if (quarter == 1) { startAngle = 0; endAngle = 90; }
+        else if (quarter == 2) { startAngle = 90; endAngle = 180; }
+        else if (quarter == 3) { startAngle = 180; endAngle = 270; }
+        else if (quarter == 4) { startAngle = 270; endAngle = 360; }
+
+        int smallRadius = max(2, radius / 30);
+        if (smallRadius <= 0) smallRadius = 1;
+
+        for (int r_outer = smallRadius; r_outer <= radius - smallRadius; r_outer += smallRadius) {
+            double circumference = 2 * M_PI * r_outer;
+            int circlesAtRadius = max(6, static_cast<int>(circumference / (smallRadius * 1.5)));
+            if (circlesAtRadius == 0) continue;
+
+            double angleRange = static_cast<double>(endAngle - startAngle);
+            double angleStep = angleRange / circlesAtRadius;
+            if (angleStep == 0 && circlesAtRadius > 0) angleStep = angleRange > 0 ? 1.0 : 0.0;
+
+            for (double angle = startAngle; angle <= endAngle; angle += angleStep) {
+                double rad = angle * M_PI / 180.0;
+                int circleX = xc + static_cast<int>(r_outer * cos(rad));
+                int circleY = yc - static_cast<int>(r_outer * sin(rad));
+
+                bool isInQuarter = false;
+                if (quarter == 0) { isInQuarter = true; }
+                else if (quarter == 1) { if (circleX >= xc && circleY <= yc) isInQuarter = true; }
+                else if (quarter == 2) { if (circleX <= xc && circleY <= yc) isInQuarter = true; }
+                else if (quarter == 3) { if (circleX <= xc && circleY >= yc) isInQuarter = true; }
+                else if (quarter == 4) { if (circleX >= xc && circleY >= yc) isInQuarter = true; }
+
+                if (isInQuarter) {
+                    Ellipse(hdc, circleX - smallRadius, circleY - smallRadius,
+                        circleX + smallRadius, circleY + smallRadius);
+                }
+            }
+        }
+       
+    }
+    break;
+
+    case FILL_CIRCLE_ALGO_NONE:
+    default:
+        break;
+    }
+
+   
+}
+
+
+
+void FillSquareWithHermit(HDC hdc, RECT square, COLORREF color) {
+    int width = square.right - square.left;
+    int height = square.bottom - square.top;
+
+    if (width <= 0 || height <= 0) return;
+    int steps = max(1, width / 3);       // Density: Adjust '3' for more/fewer vertical lines
+    double max_amplitude = 0.03 * width; // Amplitude: Adjust '0.03' for lower/higher wave deviation
+    // Loop through the width of the square, drawing vertical lines
+    for (int i = 0; i <= steps; i++) {
+        double t_width = (double)i / steps; // Normalized position across the width (0 to 1)
+        int x_base = square.left + Round(width * t_width); // Base X position for the vertical line
+        // Envelope: ensures curves flatten at the left/right boundaries of the square
+        double envelope = (1 - pow(2 * (t_width - 0.5), 2));
+
+        POINT prev_point;
+        bool first_point = true;
+
+        for (int y = square.top; y <= square.bottom; y++) { // Iterate from top to bottom
+            double t_height = (double)(y - square.top) / height; // Normalized Y from 0 (top) to 1 (bottom)
+
+            // Wave component: Adjust '2' for more/fewer full waves vertically
+            double wave_component = cos(t_height * M_PI * 2);
+
+            int x_offset = Round(max_amplitude * envelope * wave_component);
+            int current_x = x_base + x_offset;
+
+            // Clamp current_x to ensure it stays within the square's overall bounds
+            current_x = max(square.left, min(square.right - 1, current_x));
+
+            if (first_point) {
+                MoveToEx(hdc, current_x, y, NULL);
+                first_point = false;
+            }
+            else {
+                LineTo(hdc, current_x, y);
+               
+            }
+        }
+    }
+
+    //// Draw top line
+    MoveToEx(hdc, square.left, square.top, NULL);
+    LineTo(hdc, square.right - 1, square.top);
+
+    //// Draw bottom line
+    MoveToEx(hdc, square.left, square.bottom, NULL);
+    LineTo(hdc, square.right - 1, square.bottom);
+
+}
+
 // --- Function to redraw all stored shapes to the backing buffer ---
 void RedrawAllShapesToBitmap(HDC targetDC) {
     // 1. Clear the bitmap with the current background color
@@ -705,6 +907,21 @@ void RedrawAllShapesToBitmap(HDC targetDC) {
         case SHAPE_CARDINAL_SPLINE:
             DrawCardinalSpline(targetDC, shape.spline.points, shape.spline.tension, shape.spline.color);
             break;
+        case SHAPE_GDI_CIRCLE: // GDI Ellipse based circle
+            DrawCircleOutline(targetDC, shape.gdiCircle.center.x, shape.gdiCircle.center.y, shape.gdiCircle.radius, shape.gdiCircle.color);
+            break;
+        case SHAPE_FILL_CIRCLE: // <-- NEW: Call the unified function
+            DrawFilledCircle(targetDC,
+                shape.fillCircleData.center.x,
+                shape.fillCircleData.center.y,
+                shape.fillCircleData.radius,
+                shape.fillCircleData.quarter,
+                shape.fillCircleData.color,
+                shape.fillCircleData.algorithm); // <-- Pass the algorithm!
+            break;
+        case SHAPE_FILL_SQUARE_HERMIT:
+            FillSquareWithHermit(targetDC, shape.fillSquareHermit.square, shape.fillSquareHermit.color);
+            break;
         }
     }
 }
@@ -742,6 +959,9 @@ void SaveShapesToFile(HWND hwnd) {
                 case SHAPE_CIRCLE:
                     outFile.write(reinterpret_cast<const char*>(&shape.circle), sizeof(CircleShape));
                     break;
+                case SHAPE_GDI_CIRCLE:
+                    outFile.write(reinterpret_cast<const char*>(&shape.gdiCircle), sizeof(GDICircleShape));
+                    break;
                 case SHAPE_ELLIPSE:
                     outFile.write(reinterpret_cast<const char*>(&shape.ellipse), sizeof(EllipseShape));
                     break;
@@ -755,7 +975,14 @@ void SaveShapesToFile(HWND hwnd) {
                     outFile.write(reinterpret_cast<const char*>(&shape.spline.tension), sizeof(shape.spline.tension));
                     outFile.write(reinterpret_cast<const char*>(&shape.spline.color), sizeof(shape.spline.color));
                     break;
+
                 }
+                case SHAPE_FILL_CIRCLE: 
+                    outFile.write(reinterpret_cast<const char*>(&shape.fillCircleData), sizeof(shape.fillCircleData));
+                    break;
+                case SHAPE_FILL_SQUARE_HERMIT:
+                    outFile.write(reinterpret_cast<const char*>(&shape.fillSquareHermit), sizeof(FillSquareHermitShape));
+                    break;
                 }
             }
             outFile.close();
@@ -806,6 +1033,12 @@ void LoadShapesFromFile(HWND hwnd) {
                 case SHAPE_CIRCLE:
                     inFile.read(reinterpret_cast<char*>(&newShape.circle), sizeof(CircleShape));
                     break;
+                case SHAPE_GDI_CIRCLE:
+                    inFile.read(reinterpret_cast<char*>(&newShape.gdiCircle), sizeof(GDICircleShape));
+                    break;
+                case SHAPE_FILL_CIRCLE:
+                    inFile.read(reinterpret_cast<char*>(&newShape.fillCircleData), sizeof(FillCircleShape));
+                    break;
                 case SHAPE_ELLIPSE:
                     inFile.read(reinterpret_cast<char*>(&newShape.ellipse), sizeof(EllipseShape));
                     break;
@@ -820,7 +1053,12 @@ void LoadShapesFromFile(HWND hwnd) {
                     inFile.read(reinterpret_cast<char*>(&newShape.spline.tension), sizeof(newShape.spline.tension));
                     inFile.read(reinterpret_cast<char*>(&newShape.spline.color), sizeof(newShape.spline.color));
                     break;
+                
                 }
+                
+                case SHAPE_FILL_SQUARE_HERMIT:
+                    inFile.read(reinterpret_cast<char*>(&newShape.fillSquareHermit), sizeof(FillSquareHermitShape));
+                    break;
                 }
                 drawnShapes.push_back(newShape);
             }
@@ -840,6 +1078,7 @@ void LoadShapesFromFile(HWND hwnd) {
 LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) {
     HDC hdc;
     PAINTSTRUCT ps;
+    HMENU hMenu = GetMenu(hwnd);
     static HCURSOR hCursorArrow, hCursorHand, hCursorWait, hCursorCross, hCursorHelp;
 
     switch (message) {
@@ -1026,6 +1265,50 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         case 6001: drawingMode = MODE_FLOOD_FILL; fillAlgorithm = FILL_ALGO_RECURSIVE; SetCursor(hCursorCross); std::wcout << L"Mode: Flood Fill (Recursive)" << std::endl; break;
         case 6002: drawingMode = MODE_FLOOD_FILL; fillAlgorithm = FILL_ALGO_NON_RECURSIVE; SetCursor(hCursorCross); std::wcout << L"Mode: Flood Fill (Non-Recursive)" << std::endl; break;
 
+        case 6003: // Re-purposed to be specific algorithm for filled circles
+            drawingMode = MODE_FILL_CIRCLE; // Set generic filled circle mode
+            filledCircleAlgorithm = FILL_CIRCLE_LINES; // Set specific algorithm
+            SetCursor(hCursorCross);
+            std::wcout << L"Mode: Fill Circle with Lines" << std::endl;
+            break;
+        case 6004: // Re-purposed to be specific algorithm for filled circles
+            drawingMode = MODE_FILL_CIRCLE; // Set generic filled circle mode
+            filledCircleAlgorithm = FILL_CIRCLE_CIRCLES; // Set specific algorithm
+            SetCursor(hCursorCross);
+            std::wcout << L"Mode: Fill Circle with Circles)" << std::endl;
+            break;
+        case 6006: // Hermite Square Fill
+            drawingMode = MODE_FILL_SQUARE_HERMIT;
+            controlPoints.clear();
+            break;
+
+            // NEW: Circle Fill Quarter Handlers
+        case IDM_QUARTER_ALL:
+            selectedFillQuarter = 0;
+            CheckMenuRadioItem(hMenu, IDM_QUARTER_ALL, IDM_QUARTER_4, IDM_QUARTER_ALL, MF_BYCOMMAND);
+            break;
+        case IDM_QUARTER_1:
+            selectedFillQuarter = 1;
+            CheckMenuRadioItem(hMenu, IDM_QUARTER_ALL, IDM_QUARTER_4, IDM_QUARTER_1, MF_BYCOMMAND);
+            break;
+        case IDM_QUARTER_2:
+            selectedFillQuarter = 2;
+            CheckMenuRadioItem(hMenu, IDM_QUARTER_ALL, IDM_QUARTER_4, IDM_QUARTER_2, MF_BYCOMMAND);
+            break;
+        case IDM_QUARTER_3:
+            selectedFillQuarter = 3;
+            CheckMenuRadioItem(hMenu, IDM_QUARTER_ALL, IDM_QUARTER_4, IDM_QUARTER_3, MF_BYCOMMAND);
+            break;
+        case IDM_QUARTER_4:
+            selectedFillQuarter = 4;
+            CheckMenuRadioItem(hMenu, IDM_QUARTER_ALL, IDM_QUARTER_4, IDM_QUARTER_4, MF_BYCOMMAND);
+            break;
+        case 6005: // Hermite Square Fill
+            drawingMode = MODE_FILL_SQUARE_HERMIT;
+            controlPoints.clear(); // Will need 2 points for a square (start and end of diagonal)
+            SetCursor(hCursorCross);
+            std::wcout << L"Mode: Hermite Square Fill (Click twice then drag)" << std::endl;
+            break;
             // Shapes Menu - Curves
         case 7001: drawingMode = MODE_CARDINAL_SPLINE; controlPoints.clear(); SetCursor(hCursorCross); std::wcout << L"Mode: Cardinal Spline (Click for points, Right-click to finish)" << std::endl; break;
 
@@ -1094,6 +1377,70 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             InvalidateRect(hwnd, NULL, FALSE);
             std::wcout << L"Control Point added: (" << startPoint.x << L", " << startPoint.y << L")" << std::endl;
         }
+        else if (drawingMode == MODE_FILL_CIRCLE) {
+            // This is a single-click operation, so we capture all info now
+            DrawnShape newShape;
+            newShape.type = SHAPE_FILL_CIRCLE; 
+
+            newShape.fillCircleData.center = startPoint;
+            newShape.fillCircleData.radius = 50; // Example fixed radius
+            newShape.fillCircleData.quarter = selectedFillQuarter;
+            newShape.fillCircleData.color = fillColor; // Use fillColor for filled shapes
+            newShape.fillCircleData.algorithm = filledCircleAlgorithm; // Use the global variable for selected algorithm
+
+            //// Draw to backing buffer immediately for visual feedback
+            //// The DrawFilledCircle function expects HDC, center x, center y, radius, quarter, color, algorithm
+            //HPEN hOldPen = (HPEN)SelectObject(hMemDC, GetStockObject(NULL_PEN)); // No outline for fill
+            //HBRUSH hBrush = CreateSolidBrush(newShape.fillCircleData.color); // Create brush for filling
+            //HBRUSH hOldBrush = (HBRUSH)SelectObject(hMemDC, hBrush);
+
+            DrawFilledCircle(hMemDC, newShape.fillCircleData.center.x, newShape.fillCircleData.center.y,
+                newShape.fillCircleData.radius, newShape.fillCircleData.quarter, newShape.fillCircleData.color, newShape.fillCircleData.algorithm);
+
+            //SelectObject(hMemDC, hOldBrush); // Restore original brush
+            //DeleteObject(hBrush);           // Delete the brush we created
+            //SelectObject(hMemDC, hOldPen);  // Restore original pen
+
+            drawnShapes.push_back(newShape);
+            InvalidateRect(hwnd, NULL, FALSE);
+            isDrawing = false; // Single click operation ends drawing
+            drawingMode = MODE_NONE; // Reset mode
+            SetCursor(LoadCursor(NULL, IDC_ARROW)); // Restore default cursor
+        }
+        else if (drawingMode == MODE_FILL_SQUARE_HERMIT) {
+            // Assume two clicks define opposite corners of the square
+            // For the first click, just store the point.
+            if (controlPoints.size() == 1) { // First click for square
+                RECT square = {
+                    min(controlPoints[0].x, controlPoints[1].x),
+                    min(controlPoints[0].y, controlPoints[1].y),
+                    max(controlPoints[0].x, controlPoints[1].x),
+                    max(controlPoints[0].y, controlPoints[1].y)
+                };
+            }
+            else if (controlPoints.size() == 2) { // Second click for square
+                RECT square = {
+                     min(controlPoints[0].x, controlPoints[1].x),
+                     min(controlPoints[0].y, controlPoints[1].y),
+                     max(controlPoints[0].x, controlPoints[1].x),
+                     max(controlPoints[0].y, controlPoints[1].y)
+                };
+
+                DrawnShape newShape;
+                newShape.type = SHAPE_FILL_SQUARE_HERMIT;
+                newShape.fillSquareHermit.square = square;
+                newShape.fillSquareHermit.color = drawColor;
+
+                drawnShapes.push_back(newShape);
+                RedrawAllShapesToBitmap(hMemDC);
+                InvalidateRect(hwnd, NULL, FALSE);
+                isDrawing = false; // Reset after two points
+                drawingMode = MODE_NONE;
+                SetCursor(hCursorArrow);
+                controlPoints.clear(); // Clear control points
+
+            }
+        }
         break;
 
     case WM_MOUSEMOVE:
@@ -1155,12 +1502,45 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 case ELLIPSE_ALGO_POLAR: DrawPolarEllipse(hMemDC, startPoint.x, startPoint.y, newShape.ellipse.a, newShape.ellipse.b, drawColor); break;
                 case ELLIPSE_ALGO_MIDPOINT: DrawMidpointEllipse(hMemDC, startPoint.x, startPoint.y, newShape.ellipse.a, newShape.ellipse.b, drawColor); break;
                 }
+
             }
+            // --- NEW FILL SHAPES ---
+            else if (drawingMode == MODE_DRAW_GDI_CIRCLE) { // If you want a GDI circle by dragging
+                newShape.type = SHAPE_GDI_CIRCLE;
+                newShape.gdiCircle.center = startPoint;
+                newShape.gdiCircle.radius = CalculateDistance(startPoint, endPoint);
+                newShape.gdiCircle.color = drawColor; // GDI circle uses drawColor for outline
+            }
+            else if (drawingMode == MODE_FILL_SQUARE_HERMIT) {
+                newShape.type = SHAPE_FILL_SQUARE_HERMIT;
+                newShape.fillSquareHermit.square.left = min(startPoint.x, endPoint.x);
+                newShape.fillSquareHermit.square.top = min(startPoint.y, endPoint.y);
+                newShape.fillSquareHermit.square.right = max(startPoint.x, endPoint.x);
+                newShape.fillSquareHermit.square.bottom = max(startPoint.y, endPoint.y);
+                newShape.fillSquareHermit.color = fillColor; // Use fillColor for filled shapes
+
+                // Draw the shape directly to the backing buffer
+                FillSquareWithHermit(hMemDC, newShape.fillSquareHermit.square, newShape.fillSquareHermit.color);
+            }
+            else if (drawingMode == MODE_DRAW_GDI_CIRCLE) { // If you've added this drawing mode
+                newShape.type = SHAPE_GDI_CIRCLE;
+                newShape.gdiCircle.center = startPoint;
+                newShape.gdiCircle.radius = static_cast<int>(sqrt(pow(endPoint.x - startPoint.x, 2) + pow(endPoint.y - startPoint.y, 2)));
+                newShape.gdiCircle.color = drawColor;
+
+                DrawCircleOutline(hMemDC, newShape.gdiCircle.center.x, newShape.gdiCircle.center.y, newShape.gdiCircle.radius, drawColor);
+            }
+
+            // Add the newly created shape to the list of drawn shapes
             drawnShapes.push_back(newShape);
-            InvalidateRect(hwnd, NULL, FALSE); // Just invalidate, WM_PAINT will blit
+
+            // Invalidate the window to trigger a WM_PAINT, which will blit the buffer to the screen.
+            InvalidateRect(hwnd, NULL, FALSE);
         }
+
         SetCursor(hCursorArrow); // Reset cursor after drawing
         break;
+
 
     case WM_RBUTTONDOWN: // Right click to finalize spline drawing
         if (drawingMode == MODE_CARDINAL_SPLINE) {
@@ -1240,6 +1620,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             }
         }
 
+
         EndPaint(hwnd, &ps);
         break;
 
@@ -1283,6 +1664,7 @@ void CreateMainMenu(HWND hwnd) {
     HMENU hEditMenu = CreatePopupMenu();
     HMENU hOptionsMenu = CreatePopupMenu();
     HMENU hCursorMenu = CreatePopupMenu();
+    HMENU hQuarterMenu = CreatePopupMenu();
 
     // File Menu
     AppendMenu(hMenu, MF_POPUP, (UINT_PTR)hFileMenu, L"&File");
@@ -1338,6 +1720,9 @@ void CreateMainMenu(HWND hwnd) {
     AppendMenu(hBgColorMenu, MF_STRING, 2307, L"&Blue");
     AppendMenu(hBgColorMenu, MF_SEPARATOR, 0, NULL);
     AppendMenu(hBgColorMenu, MF_STRING, 2308, L"&Custom Color...");
+    HMENU hSubMenuQuarter = CreatePopupMenu();
+    HMENU hSubMenuFilledCircles = CreatePopupMenu();
+    HMENU hSubMenuShapes = CreatePopupMenu();
 
     // Shapes Menu
     AppendMenu(hMenu, MF_POPUP, (UINT_PTR)hShapesMenu, L"&Shapes");
@@ -1363,6 +1748,24 @@ void CreateMainMenu(HWND hwnd) {
     AppendMenu(hShapesMenu, MF_POPUP, (UINT_PTR)hFillMenu, L"&Fill");
     AppendMenu(hFillMenu, MF_STRING, 6001, L"&Recursive Flood Fill");
     AppendMenu(hFillMenu, MF_STRING, 6002, L"&Non-Recursive Flood Fill");
+
+
+    AppendMenu(hFillMenu, MF_SEPARATOR, 0, NULL);
+    AppendMenu(hFillMenu, MF_STRING, 6003, L"Circles by &Lines");
+    AppendMenu(hFillMenu, MF_STRING, 6004, L"Circles by &Circles");
+    AppendMenu(hSubMenuShapes, MF_POPUP, (UINT_PTR)hSubMenuFilledCircles, L"&Filled Circles");
+
+    AppendMenu(hQuarterMenu, MF_STRING | MF_CHECKED, IDM_QUARTER_ALL, L"All Quarters"); // Default checked
+    AppendMenu(hQuarterMenu, MF_STRING, IDM_QUARTER_1, L"Quarter 1 (Top-Right)");
+    AppendMenu(hQuarterMenu, MF_STRING, IDM_QUARTER_2, L"Quarter 2 (Top-Left)");
+    AppendMenu(hQuarterMenu, MF_STRING, IDM_QUARTER_3, L"Quarter 3 (Bottom-Left)");
+    AppendMenu(hQuarterMenu, MF_STRING, IDM_QUARTER_4, L"Quarter 4 (Bottom-Right)");
+
+    // Replace the old MF_STRING for 6005 with the new POPUP menu
+    AppendMenu(hFillMenu, MF_POPUP, (UINT_PTR)hQuarterMenu, L"Circle Fill &Quarter"); // This replaces 6005
+
+    
+    AppendMenu(hFillMenu, MF_STRING, 6006, L"Hermite &Square Fill");
 
     AppendMenu(hShapesMenu, MF_POPUP, (UINT_PTR)hCurveMenu, L"&Curves");
     AppendMenu(hCurveMenu, MF_STRING, 7001, L"&Cardinal Spline (4+ points, right click to finish)");
