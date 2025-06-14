@@ -1932,7 +1932,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             drawnShapes.push_back(newShape);
             InvalidateRect(hwnd, NULL, FALSE); // Just invalidate, WM_PAINT will blit
         }
-        SetCursor(hCursorArrow); // Reset cursor after drawing
+        //SetCursor(hCursorArrow); // Reset cursor after drawing
         break;
 
     case WM_RBUTTONDOWN: // Right click to finalize spline or polygon drawing
@@ -1961,7 +1961,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 RedrawAllShapesToBitmap(hMemDC); // Clear preview points if cancelled
                 InvalidateRect(hwnd, NULL, FALSE);
                 drawingMode = MODE_NONE;
-                SetCursor(hCursorArrow);
+                //SetCursor(hCursorArrow);
             }
             return 0; // Important: Return 0 to indicate we handled the message
         }
