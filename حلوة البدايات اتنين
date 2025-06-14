@@ -24,7 +24,10 @@ enum DrawingMode {
     MODE_DRAW_ELLIPSE,
     MODE_FLOOD_FILL,
     MODE_CARDINAL_SPLINE,
-    MODE_DRAW_POLYGON // Add this
+    MODE_DRAW_POLYGON,
+    MODE_FILL_SQUARE_HERMIT,
+    MODE_DRAW_GDI_CIRCLE,
+    MODE_FILL_CIRCLE
 };
 
 enum LineAlgoType {
@@ -58,17 +61,33 @@ enum PolygonFillType {
     POLYGON_FILL_NON_CONVEX
 };
 
+enum QuarterMenu {
+    IDM_QUARTER_ALL = 10001,
+    IDM_QUARTER_1, // Top-Right
+    IDM_QUARTER_2, // Top-Left
+    IDM_QUARTER_3, // Bottom-Left
+    IDM_QUARTER_4  // Bottom-Right
+};
+
+enum FilledCircleAlgorithm {
+    FILL_CIRCLE_ALGO_NONE, // Default or unselected
+    FILL_CIRCLE_LINES, // The original "lines from center" method
+    FILL_CIRCLE_CIRCLES, // The "circles by circles" method
+
+};
+
 enum ShapeType {
     SHAPE_LINE,
     SHAPE_CIRCLE,
     SHAPE_ELLIPSE,
     SHAPE_FILLED_REGION,
     SHAPE_CARDINAL_SPLINE,
-    SHAPE_POLYGON // Add this
+    SHAPE_POLYGON,
+    SHAPE_GDI_CIRCLE,           
+    SHAPE_FILL_CIRCLE,
+    SHAPE_FILL_SQUARE_HERMIT
 };
 
-
-   
 // =============================================
 // Data Structures
 // =============================================
@@ -117,6 +136,25 @@ struct PolygonShape {
     PolygonFillType fillType; // To distinguish between algorithms if needed
 };
 
+struct GDICircleShape { // For GDI Ellipse based circle
+    POINT center;
+    int radius;
+    COLORREF color; // Color of the outline, GDI ellipse uses pen
+};
+
+struct FillCircleShape {
+    POINT center;
+    int radius;
+    int quarter; // 0 for all, 1-4 for specific quarters
+    COLORREF color;
+    FilledCircleAlgorithm algorithm; // 
+};
+
+struct FillSquareHermitShape {
+    RECT square;
+    COLORREF color;
+};
+
 struct DrawnShape {
     ShapeType type;
     union {
@@ -125,7 +163,10 @@ struct DrawnShape {
         EllipseShape ellipse;
         FilledRegionShape filledRegion;
         SplineShape spline;
-        PolygonShape polygon; // Add this
+        PolygonShape polygon; 
+        GDICircleShape gdiCircle;
+        FillCircleShape fillCircleData;
+        FillSquareHermitShape fillSquareHermit;
     };
 
     // Default constructor to avoid undefined behavior for union members
@@ -150,6 +191,15 @@ struct DrawnShape {
             polygon.drawcolor = other.polygon.drawcolor;
 			polygon.fill = other.polygon.fill; // Assuming fill is a COLORREF
             polygon.fillType = other.polygon.fillType;
+            break;
+        case SHAPE_GDI_CIRCLE:
+            gdiCircle = other.gdiCircle;
+            break;
+        case SHAPE_FILL_CIRCLE: // <-- NEW: Handle unified filled circle
+            fillCircleData = other.fillCircleData;
+            break;
+        case SHAPE_FILL_SQUARE_HERMIT:
+            fillSquareHermit = other.fillSquareHermit;
             break;
         }
     }
@@ -184,6 +234,15 @@ struct DrawnShape {
                 polygon.fill = other.polygon.fill; // Assuming fill is a COLORREF
                 polygon.fillType = other.polygon.fillType;
                 break;
+            case SHAPE_GDI_CIRCLE:
+                gdiCircle = other.gdiCircle;
+                break;
+            case SHAPE_FILL_CIRCLE: // <-- NEW: Handle unified filled circle
+                fillCircleData = other.fillCircleData;
+                break;
+            case SHAPE_FILL_SQUARE_HERMIT:
+                fillSquareHermit = other.fillSquareHermit;
+                break;
             }
         }
         return *this;
@@ -215,6 +274,7 @@ COLORREF fillColor = RGB(255, 0, 0);
 COLORREF bgColor = RGB(255, 255, 255);
 
 DrawingMode drawingMode = MODE_NONE;
+FilledCircleAlgorithm filledCircleAlgorithm = FILL_CIRCLE_ALGO_NONE; 
 LineAlgoType lineAlgorithm = LINE_ALGO_BRESENHAM;
 CircleAlgoType circleAlgorithm = CIRCLE_ALGO_MIDPOINT;
 EllipseAlgoType ellipseAlgorithm = ELLIPSE_ALGO_MIDPOINT;
@@ -229,6 +289,7 @@ std::vector<DrawnShape> drawnShapes;
 // For polygon drawing
 std::vector<POINT> currentPolygonVertices; // Stores vertices for the polygon being drawn
 bool isPolygonStarted = false;
+int selectedFillQuarter = 0;
 
 // =============================================
 // Utility Functions
@@ -261,6 +322,10 @@ struct Edge {
         return x < other.x;
     }
 };
+
+int CalculateDistance(POINT p1, POINT p2) {
+    return static_cast<int>(sqrt(pow(p2.x - p1.x, 2) + pow(p2.y - p1.y, 2)));
+}
 
 // =============================================
 // Drawing Algorithms
@@ -710,7 +775,6 @@ void ConvexPolygonFill(HDC hdc, const std::vector<POINT>& vertices, COLORREF col
         }
     }
 }
-
 // =========================================================================================
 // Non-Convex Polygon Fill (General Scanline Algorithm)
 // =========================================================================================
@@ -791,7 +855,6 @@ void NonConvexPolygonFill(HDC hdc, const std::vector<POINT>& vertices, COLORREF 
         }
     }
 }
-
 // Wrapper for polygon drawing, allowing selection of fill algorithm
 void DrawFilledPolygon(HDC hdc, const std::vector<POINT>& vertices, COLORREF color, PolygonFillType fillType , COLORREF fillcolor) {
     // First, draw the outline if you want
@@ -805,12 +868,140 @@ void DrawFilledPolygon(HDC hdc, const std::vector<POINT>& vertices, COLORREF col
         NonConvexPolygonFill(hdc, vertices, fillcolor);
     }
 }
+// ----------------- Circle Filling Algorithms -----------------
+void DrawCircleOutline(HDC hdc, int x, int y, int radius, COLORREF color) {
+
+    Ellipse(hdc, x - radius, y - radius, x + radius, y + radius);
+
+}
+
+void DrawFilledCircle(HDC hdc, int xc, int yc, int radius, int quarter, COLORREF color, FilledCircleAlgorithm algorithm) {
+
+    switch (algorithm) {
+    case FILL_CIRCLE_LINES:
+    {
+        int startAngle = 0;
+        int endAngle = 360;
+        if (quarter == 1) { startAngle = 0; endAngle = 90; }
+        else if (quarter == 2) { startAngle = 90; endAngle = 180; }
+        else if (quarter == 3) { startAngle = 180; endAngle = 270; }
+        else if (quarter == 4) { startAngle = 270; endAngle = 360; }
+
+        for (int angle = startAngle; angle <= endAngle; angle += 1) {
+            double rad = angle * M_PI / 180.0;
+            int xEnd = xc + (int)(radius * cos(rad));
+            int yEnd = yc - (int)(radius * sin(rad)); // Y-axis inversion for GDI
+
+            MoveToEx(hdc, xc, yc, NULL);
+            LineTo(hdc, xEnd, yEnd);
+        }
+    }
+    break;
+
+    case FILL_CIRCLE_CIRCLES:
+    {
+
+        int startAngle = 0;
+        int endAngle = 360;
+        if (quarter == 1) { startAngle = 0; endAngle = 90; }
+        else if (quarter == 2) { startAngle = 90; endAngle = 180; }
+        else if (quarter == 3) { startAngle = 180; endAngle = 270; }
+        else if (quarter == 4) { startAngle = 270; endAngle = 360; }
+
+        int smallRadius = max(2, radius / 30);
+        if (smallRadius <= 0) smallRadius = 1;
+
+        for (int r_outer = smallRadius; r_outer <= radius - smallRadius; r_outer += smallRadius) {
+            double circumference = 2 * M_PI * r_outer;
+            int circlesAtRadius = max(6, static_cast<int>(circumference / (smallRadius * 1.5)));
+            if (circlesAtRadius == 0) continue;
+
+            double angleRange = static_cast<double>(endAngle - startAngle);
+            double angleStep = angleRange / circlesAtRadius;
+            if (angleStep == 0 && circlesAtRadius > 0) angleStep = angleRange > 0 ? 1.0 : 0.0;
+
+            for (double angle = startAngle; angle <= endAngle; angle += angleStep) {
+                double rad = angle * M_PI / 180.0;
+                int circleX = xc + static_cast<int>(r_outer * cos(rad));
+                int circleY = yc - static_cast<int>(r_outer * sin(rad));
+
+                bool isInQuarter = false;
+                if (quarter == 0) { isInQuarter = true; }
+                else if (quarter == 1) { if (circleX >= xc && circleY <= yc) isInQuarter = true; }
+                else if (quarter == 2) { if (circleX <= xc && circleY <= yc) isInQuarter = true; }
+                else if (quarter == 3) { if (circleX <= xc && circleY >= yc) isInQuarter = true; }
+                else if (quarter == 4) { if (circleX >= xc && circleY >= yc) isInQuarter = true; }
+
+                if (isInQuarter) {
+                    Ellipse(hdc, circleX - smallRadius, circleY - smallRadius,
+                        circleX + smallRadius, circleY + smallRadius);
+                }
+            }
+        }
+
+    }
+    break;
+
+    case FILL_CIRCLE_ALGO_NONE:
+    default:
+        break;
+    }
 
 
+}
+
+void FillSquareWithHermit(HDC hdc, RECT square, COLORREF color) {
+    int width = square.right - square.left;
+    int height = square.bottom - square.top;
+
+    if (width <= 0 || height <= 0) return;
+    int steps = max(1, width / 3);       // Density: Adjust '3' for more/fewer vertical lines
+    double max_amplitude = 0.03 * width; // Amplitude: Adjust '0.03' for lower/higher wave deviation
+    // Loop through the width of the square, drawing vertical lines
+    for (int i = 0; i <= steps; i++) {
+        double t_width = (double)i / steps; // Normalized position across the width (0 to 1)
+        int x_base = square.left + Round(width * t_width); // Base X position for the vertical line
+        // Envelope: ensures curves flatten at the left/right boundaries of the square
+        double envelope = (1 - pow(2 * (t_width - 0.5), 2));
+
+        POINT prev_point;
+        bool first_point = true;
+
+        for (int y = square.top; y <= square.bottom; y++) { // Iterate from top to bottom
+            double t_height = (double)(y - square.top) / height; // Normalized Y from 0 (top) to 1 (bottom)
+
+            // Wave component: Adjust '2' for more/fewer full waves vertically
+            double wave_component = cos(t_height * M_PI * 2);
+
+            int x_offset = Round(max_amplitude * envelope * wave_component);
+            int current_x = x_base + x_offset;
+
+            // Clamp current_x to ensure it stays within the square's overall bounds
+            current_x = max(square.left, min(square.right - 1, current_x));
+
+            if (first_point) {
+                MoveToEx(hdc, current_x, y, NULL);
+                first_point = false;
+            }
+            else {
+                LineTo(hdc, current_x, y);
+
+            }
+        }
+    }
+
+    //// Draw top line
+    MoveToEx(hdc, square.left, square.top, NULL);
+    LineTo(hdc, square.right - 1, square.top);
+
+    //// Draw bottom line
+    MoveToEx(hdc, square.left, square.bottom, NULL);
+    LineTo(hdc, square.right - 1, square.bottom);
+
+}
 // =============================================
 // Drawing Management
 // =============================================
-
 void RedrawAllShapesToBitmap(HDC targetDC) {
     HBRUSH hBackgroundBrush = CreateSolidBrush(bgColor);
     FillRect(targetDC, &clientRect, hBackgroundBrush);
@@ -858,161 +1049,181 @@ void RedrawAllShapesToBitmap(HDC targetDC) {
         case SHAPE_POLYGON:
             DrawFilledPolygon(targetDC, shape.polygon.vertices, shape.polygon.drawcolor, shape.polygon.fillType, shape.polygon.fill);
             break;
+        case SHAPE_GDI_CIRCLE: // GDI Ellipse based circle
+            DrawCircleOutline(targetDC, shape.gdiCircle.center.x, shape.gdiCircle.center.y, shape.gdiCircle.radius, shape.gdiCircle.color);
+            break;
+        case SHAPE_FILL_CIRCLE: // <-- NEW: Call the unified function
+            DrawFilledCircle(targetDC,
+                shape.fillCircleData.center.x,
+                shape.fillCircleData.center.y,
+                shape.fillCircleData.radius,
+                shape.fillCircleData.quarter,
+                shape.fillCircleData.color,
+                shape.fillCircleData.algorithm); // <-- Pass the algorithm!
+            break;
+        case SHAPE_FILL_SQUARE_HERMIT:
+            FillSquareWithHermit(targetDC, shape.fillSquareHermit.square, shape.fillSquareHermit.color);
+            break;
         
         }
     }
 }
-
 // =============================================
 // File Operations
 // =============================================
+// --- Save/Load Functions ---
+void SaveToFile(HWND hwnd) {
+    OPENFILENAMEW ofn;
+    wchar_t fileName[MAX_PATH] = L"";
 
-void SaveShapesToFile(HWND hwnd) {
-    OPENFILENAME ofn;
-    wchar_t szFile[260];
     ZeroMemory(&ofn, sizeof(ofn));
     ofn.lStructSize = sizeof(ofn);
     ofn.hwndOwner = hwnd;
-    ofn.lpstrFile = szFile;
-    ofn.lpstrFile[0] = L'\0';
-    ofn.nMaxFile = sizeof(szFile) / sizeof(szFile[0]);
-    ofn.lpstrFilter = L"Drawing Files (*.drw)\0*.drw\0All Files (*.*)\0*.*\0";
-    ofn.nFilterIndex = 1;
-    ofn.Flags = OFN_PATHMUSTEXIST | OFN_OVERWRITEPROMPT;
+    ofn.lpstrFilter = L"Binary Files (*.bin)\0*.bin\0All Files (*.*)\0*.*\0";
+    ofn.lpstrFile = fileName;
+    ofn.nMaxFile = MAX_PATH;
+    ofn.lpstrTitle = L"Save Shapes To File";
+    ofn.Flags = OFN_OVERWRITEPROMPT;
 
-    if (GetSaveFileName(&ofn) == TRUE) {
-        std::ofstream outFile(ofn.lpstrFile, std::ios::binary);
-        if (outFile.is_open()) {
-            outFile.write(reinterpret_cast<const char*>(&drawColor), sizeof(drawColor));
-            outFile.write(reinterpret_cast<const char*>(&fillColor), sizeof(fillColor));
-            outFile.write(reinterpret_cast<const char*>(&bgColor), sizeof(bgColor));
+    if (GetSaveFileNameW(&ofn)) {
+        std::ofstream out(fileName, std::ios::binary);
 
-            size_t numShapes = drawnShapes.size();
-            outFile.write(reinterpret_cast<const char*>(&numShapes), sizeof(numShapes));
+        if (!out) return;
 
-            for (const auto& shape : drawnShapes) {
-                outFile.write(reinterpret_cast<const char*>(&shape.type), sizeof(shape.type));
-                switch (shape.type) {
-                case SHAPE_LINE:
-                    outFile.write(reinterpret_cast<const char*>(&shape.line), sizeof(LineShape));
-                    break;
-                case SHAPE_CIRCLE:
-                    outFile.write(reinterpret_cast<const char*>(&shape.circle), sizeof(CircleShape));
-                    break;
-                case SHAPE_ELLIPSE:
-                    outFile.write(reinterpret_cast<const char*>(&shape.ellipse), sizeof(EllipseShape));
-                    break;
-                case SHAPE_FILLED_REGION:
-                    outFile.write(reinterpret_cast<const char*>(&shape.filledRegion), sizeof(FilledRegionShape));
-                    break;
-                case SHAPE_CARDINAL_SPLINE: {
-                    size_t numPoints = shape.spline.points.size();
-                    outFile.write(reinterpret_cast<const char*>(&numPoints), sizeof(numPoints));
-                    outFile.write(reinterpret_cast<const char*>(shape.spline.points.data()), numPoints * sizeof(POINT));
-                    outFile.write(reinterpret_cast<const char*>(&shape.spline.tension), sizeof(shape.spline.tension));
-                    outFile.write(reinterpret_cast<const char*>(&shape.spline.color), sizeof(shape.spline.color));
-                    break;
-                }
-                case SHAPE_POLYGON: { // NEW CASE FOR POLYGON
-                    size_t numVertices = shape.polygon.vertices.size();
-                    outFile.write(reinterpret_cast<const char*>(&numVertices), sizeof(numVertices));
-                    outFile.write(reinterpret_cast<const char*>(shape.polygon.vertices.data()), numVertices * sizeof(POINT));
-                    outFile.write(reinterpret_cast<const char*>(&shape.polygon.drawcolor), sizeof(shape.polygon.drawcolor));
-                    outFile.write(reinterpret_cast<const char*>(&shape.polygon.fillType), sizeof(shape.polygon.fillType));
-                    outFile.write(reinterpret_cast<const char*>(&shape.polygon.fill), sizeof(shape.polygon.fill));
-
-                    break;
-                }
-                }
+        size_t count = drawnShapes.size();
+        out.write(reinterpret_cast<const char*>(&count), sizeof(count));
+        for (const auto& shape : drawnShapes) {
+            out.write(reinterpret_cast<const char*>(&shape.type), sizeof(shape.type));
+            switch (shape.type) {
+            case SHAPE_LINE: out.write(reinterpret_cast<const char*>(&shape.line), sizeof(LineShape)); break;
+            case SHAPE_CIRCLE: out.write(reinterpret_cast<const char*>(&shape.circle), sizeof(CircleShape)); break;
+            case SHAPE_ELLIPSE: out.write(reinterpret_cast<const char*>(&shape.ellipse), sizeof(EllipseShape)); break;
+            case SHAPE_FILLED_REGION: out.write(reinterpret_cast<const char*>(&shape.filledRegion), sizeof(FilledRegionShape)); break;
+            case SHAPE_CARDINAL_SPLINE: {
+                size_t pointCount = shape.spline.points.size();
+                out.write(reinterpret_cast<const char*>(&pointCount), sizeof(pointCount));
+                out.write(reinterpret_cast<const char*>(shape.spline.points.data()), pointCount * sizeof(POINT));
+                out.write(reinterpret_cast<const char*>(&shape.spline.tension), sizeof(double));
+                out.write(reinterpret_cast<const char*>(&shape.spline.color), sizeof(COLORREF));
+                break;
             }
-            outFile.close();
-            std::wcout << L"Drawing saved to: " << ofn.lpstrFile << std::endl;
+            case SHAPE_POLYGON: {
+                size_t vertexCount = shape.polygon.vertices.size();
+                out.write(reinterpret_cast<const char*>(&vertexCount), sizeof(vertexCount));
+                out.write(reinterpret_cast<const char*>(shape.polygon.vertices.data()), vertexCount * sizeof(POINT));
+                out.write(reinterpret_cast<const char*>(&shape.polygon.drawcolor), sizeof(COLORREF));
+                out.write(reinterpret_cast<const char*>(&shape.polygon.fillType), sizeof(PolygonFillType));
+                out.write(reinterpret_cast<const char*>(&shape.polygon.fill), sizeof(COLORREF));
+                break;
+            }
+			case SHAPE_GDI_CIRCLE: out.write(reinterpret_cast<const char*>(&shape.gdiCircle), sizeof(GDICircleShape)); break;
+			case SHAPE_FILL_CIRCLE: out.write(reinterpret_cast<const char*>(&shape.fillCircleData), sizeof(FillCircleShape)); break;
+			case SHAPE_FILL_SQUARE_HERMIT: out.write(reinterpret_cast<const char*>(&shape.fillSquareHermit), sizeof(FillSquareHermitShape)); break;
+
+            }
         }
-        else {
-            MessageBox(hwnd, L"Could not open file for saving.", L"Error", MB_OK | MB_ICONERROR);
-        }
+        out.write(reinterpret_cast<const char*>(&bgColor), sizeof(bgColor));
+        out.close();
+        std::wcout << L"Saved to: " << fileName << std::endl;
     }
 }
 
-void LoadShapesFromFile(HWND hwnd) {
-    OPENFILENAME ofn;
-    wchar_t szFile[260];
+void LoadFromFile(HWND hwnd) {
+    OPENFILENAMEW ofn;
+    wchar_t fileName[MAX_PATH] = L"";
+
     ZeroMemory(&ofn, sizeof(ofn));
     ofn.lStructSize = sizeof(ofn);
     ofn.hwndOwner = hwnd;
-    ofn.lpstrFile = szFile;
-    ofn.lpstrFile[0] = L'\0';
-    ofn.nMaxFile = sizeof(szFile) / sizeof(szFile[0]);
-    ofn.lpstrFilter = L"Drawing Files (*.drw)\0*.drw\0All Files (*.*)\0*.*\0";
-    ofn.nFilterIndex = 1;
-    ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST;
+    ofn.lpstrFilter = L"Binary Files (*.bin)\0*.bin\0All Files (*.*)\0*.*\0";
+    ofn.lpstrFile = fileName;
+    ofn.nMaxFile = MAX_PATH;
+    ofn.lpstrTitle = L"Load Shapes From File";
+    ofn.Flags = OFN_FILEMUSTEXIST;
 
-    if (GetOpenFileName(&ofn) == TRUE) {
-        std::ifstream inFile(ofn.lpstrFile, std::ios::binary);
-        if (inFile.is_open()) {
-            drawnShapes.clear();
+    if (GetOpenFileNameW(&ofn)) {
+        std::ifstream in(fileName, std::ios::binary);
+        if (!in) return;
 
-            inFile.read(reinterpret_cast<char*>(&drawColor), sizeof(drawColor));
-            inFile.read(reinterpret_cast<char*>(&fillColor), sizeof(fillColor));
-            inFile.read(reinterpret_cast<char*>(&bgColor), sizeof(bgColor));
+        drawnShapes.clear();
+        size_t count;
+        in.read(reinterpret_cast<char*>(&count), sizeof(count));
 
-            size_t numShapes;
-            inFile.read(reinterpret_cast<char*>(&numShapes), sizeof(numShapes));
+        for (size_t i = 0; i < count; ++i) {
+            DrawnShape shape;
+            in.read(reinterpret_cast<char*>(&shape.type), sizeof(shape.type));
+            switch (shape.type) {
+            case SHAPE_LINE: in.read(reinterpret_cast<char*>(&shape.line), sizeof(LineShape)); break;
+            case SHAPE_CIRCLE: in.read(reinterpret_cast<char*>(&shape.circle), sizeof(CircleShape)); break;
+            case SHAPE_ELLIPSE: in.read(reinterpret_cast<char*>(&shape.ellipse), sizeof(EllipseShape)); break;
+            case SHAPE_FILLED_REGION: in.read(reinterpret_cast<char*>(&shape.filledRegion), sizeof(FilledRegionShape)); break;
+            case SHAPE_CARDINAL_SPLINE: {
+                size_t pointCount;
+                SplineShape tempSpline;
 
-            for (size_t i = 0; i < numShapes; ++i) {
-                DrawnShape newShape;
-                inFile.read(reinterpret_cast<char*>(&newShape.type), sizeof(newShape.type));
+                in.read(reinterpret_cast<char*>(&pointCount), sizeof(pointCount));
+                tempSpline.points.resize(pointCount);
+                in.read(reinterpret_cast<char*>(tempSpline.points.data()), pointCount * sizeof(POINT));
+                in.read(reinterpret_cast<char*>(&tempSpline.tension), sizeof(double));
+                in.read(reinterpret_cast<char*>(&tempSpline.color), sizeof(COLORREF));
 
-                switch (newShape.type) {
-                case SHAPE_LINE:
-                    inFile.read(reinterpret_cast<char*>(&newShape.line), sizeof(LineShape));
-                    break;
-                case SHAPE_CIRCLE:
-                    inFile.read(reinterpret_cast<char*>(&newShape.circle), sizeof(CircleShape));
-                    break;
-                case SHAPE_ELLIPSE:
-                    inFile.read(reinterpret_cast<char*>(&newShape.ellipse), sizeof(EllipseShape));
-                    break;
-                case SHAPE_FILLED_REGION:
-                    inFile.read(reinterpret_cast<char*>(&newShape.filledRegion), sizeof(FilledRegionShape));
-                    break;
-                case SHAPE_CARDINAL_SPLINE: {
-                    size_t numPoints;
-                    inFile.read(reinterpret_cast<char*>(&numPoints), sizeof(numPoints));
-                    newShape.spline.points.resize(numPoints);
-                    inFile.read(reinterpret_cast<char*>(newShape.spline.points.data()), numPoints * sizeof(POINT));
-                    inFile.read(reinterpret_cast<char*>(&newShape.spline.tension), sizeof(newShape.spline.tension));
-                    inFile.read(reinterpret_cast<char*>(&newShape.spline.color), sizeof(newShape.spline.color));
-                    break;
-                }
-                case SHAPE_POLYGON: { // NEW CASE FOR POLYGON
-                    size_t numVertices;
-                    inFile.read(reinterpret_cast<char*>(&numVertices), sizeof(numVertices));
-                    newShape.polygon.vertices.resize(numVertices);
-                    inFile.read(reinterpret_cast<char*>(newShape.polygon.vertices.data()), numVertices * sizeof(POINT));
-                    inFile.read(reinterpret_cast<char*>(&newShape.polygon.drawcolor), sizeof(newShape.polygon.drawcolor));
-                    inFile.read(reinterpret_cast<char*>(&newShape.polygon.fillType), sizeof(newShape.polygon.fillType));
-                    inFile.read(reinterpret_cast<char*>(&newShape.polygon.fill), sizeof(newShape.polygon.fill));
-                    break;
-                }
-                }
-                drawnShapes.push_back(newShape);
+
+                new (&shape.spline) SplineShape();
+                shape.spline = std::move(tempSpline);
+                break;
             }
-            inFile.close();
-            RedrawAllShapesToBitmap(hMemDC);
-            InvalidateRect(hwnd, NULL, FALSE);
-            std::wcout << L"Drawing loaded from: " << ofn.lpstrFile << std::endl;
+            case SHAPE_POLYGON: {
+                size_t vertexCount;
+                PolygonShape tempPolygon;
+                in.read(reinterpret_cast<char*>(&vertexCount), sizeof(vertexCount));
+                tempPolygon.vertices.resize(vertexCount);
+                in.read(reinterpret_cast<char*>(tempPolygon.vertices.data()), vertexCount * sizeof(POINT));
+                in.read(reinterpret_cast<char*>(&tempPolygon.drawcolor), sizeof(COLORREF));
+                in.read(reinterpret_cast<char*>(&tempPolygon.fillType), sizeof(PolygonFillType));
+                in.read(reinterpret_cast<char*>(&tempPolygon.fill), sizeof(COLORREF));
+                new (&shape.polygon) PolygonShape();
+                shape.polygon = std::move(tempPolygon);
+                break;
+            }
+
+            case SHAPE_GDI_CIRCLE: {
+                in.read(reinterpret_cast<char*>(&shape.gdiCircle), sizeof(GDICircleShape));
+                break;
+            }
+            case SHAPE_FILL_CIRCLE: {
+                in.read(reinterpret_cast<char*>(&shape.fillCircleData), sizeof(FillCircleShape));
+                break;
+            }
+            case SHAPE_FILL_SQUARE_HERMIT: {
+                in.read(reinterpret_cast<char*>(&shape.fillSquareHermit), sizeof(FillSquareHermitShape));
+                break;
+            }
+
+            }
+
+            drawnShapes.push_back(shape);
+
+
         }
-        else {
-            MessageBox(hwnd, L"Could not open file for loading.", L"Error", MB_OK | MB_ICONERROR);
-        }
+
+        in.read(reinterpret_cast<char*>(&bgColor), sizeof(bgColor));
+
+
+        RedrawAllShapesToBitmap(hMemDC);
+        InvalidateRect(hwnd, NULL, FALSE);
+
+
+        in.close();
+        RedrawAllShapesToBitmap(hMemDC);
+        InvalidateRect(hwnd, NULL, FALSE);
+        std::wcout << L"Loaded from: " << fileName << std::endl;
     }
 }
-
 // =============================================
 // Menu Functions
 // =============================================
-void CreateMainMenu(HWND hwnd) {
+void CreateMainMenu(HWND hwnd)
+{
     HMENU hMenu = CreateMenu();
     HMENU hFileMenu = CreatePopupMenu();
     HMENU hColorsMenu = CreatePopupMenu();
@@ -1024,11 +1235,15 @@ void CreateMainMenu(HWND hwnd) {
     HMENU hCircleEditMenu = CreatePopupMenu();
     HMENU hEllipseEditMenu = CreatePopupMenu();
     HMENU hFillMenu = CreatePopupMenu();
+    HMENU hSubMenuQuarter = CreatePopupMenu();
+    HMENU hSubMenuFilledCircles = CreatePopupMenu();
+    HMENU hSubMenuShapes = CreatePopupMenu();
     HMENU hCurveMenu = CreatePopupMenu();
     HMENU hEditMenu = CreatePopupMenu();
     HMENU hOptionsMenu = CreatePopupMenu();
     HMENU hCursorMenu = CreatePopupMenu();
-    HMENU hSubMenuPolygons = CreatePopupMenu(); // Added for polygon options
+    HMENU hSubMenuPolygons = CreatePopupMenu(); 
+    HMENU hQuarterMenu = CreatePopupMenu();
 
     // File Menu
     AppendMenu(hMenu, MF_POPUP, (UINT_PTR)hFileMenu, L"&File");
@@ -1110,6 +1325,21 @@ void CreateMainMenu(HWND hwnd) {
     AppendMenu(hFillMenu, MF_STRING, 6001, L"&Recursive Flood Fill");
     AppendMenu(hFillMenu, MF_STRING, 6002, L"&Non-Recursive Flood Fill");
 
+    AppendMenu(hFillMenu, MF_SEPARATOR, 0, NULL);
+    AppendMenu(hFillMenu, MF_STRING, 6003, L"Circles by &Lines");
+    AppendMenu(hFillMenu, MF_STRING, 6004, L"Circles by &Circles");
+    AppendMenu(hSubMenuShapes, MF_POPUP, (UINT_PTR)hSubMenuFilledCircles, L"&Filled Circles");
+
+    AppendMenu(hQuarterMenu, MF_STRING | MF_CHECKED, IDM_QUARTER_ALL, L"All Quarters"); // Default checked
+    AppendMenu(hQuarterMenu, MF_STRING, IDM_QUARTER_1, L"Quarter 1 (Top-Right)");
+    AppendMenu(hQuarterMenu, MF_STRING, IDM_QUARTER_2, L"Quarter 2 (Top-Left)");
+    AppendMenu(hQuarterMenu, MF_STRING, IDM_QUARTER_3, L"Quarter 3 (Bottom-Left)");
+    AppendMenu(hQuarterMenu, MF_STRING, IDM_QUARTER_4, L"Quarter 4 (Bottom-Right)");
+
+    AppendMenu(hFillMenu, MF_POPUP, (UINT_PTR)hQuarterMenu, L"Circle Fill &Quarter"); // This replaces 6005
+    AppendMenu(hFillMenu, MF_STRING, 6006, L"Hermite &Square Fill");
+
+
     AppendMenu(hShapesMenu, MF_POPUP, (UINT_PTR)hCurveMenu, L"&Curves");
     AppendMenu(hCurveMenu, MF_STRING, 7001, L"&Cardinal Spline (4+ points, right click to finish)");
 
@@ -1138,10 +1368,10 @@ void CreateMainMenu(HWND hwnd) {
 // =============================================
 // Window Procedure
 // =============================================
-
 LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) {
     HDC hdc;
     PAINTSTRUCT ps;
+    HMENU hMenu = GetMenu(hwnd);
     static HCURSOR hCursorArrow, hCursorHand, hCursorWait, hCursorCross, hCursorHelp;
 
     switch (message) {
@@ -1182,7 +1412,6 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         break;
 
     case WM_SIZE:
-        // ... (existing code for WM_SIZE) ...
         GetClientRect(hwnd, &clientRect);
         if (hMemDC && hOldBitmap) {
             SelectObject(hMemDC, hOldBitmap); // Deselect old bitmap
@@ -1215,14 +1444,17 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             RedrawAllShapesToBitmap(hMemDC); // Clear bitmap with new BG
             InvalidateRect(hwnd, NULL, FALSE);
             drawingMode = MODE_NONE;
+            filledCircleAlgorithm = FILL_CIRCLE_ALGO_NONE; 
             SetCursor(hCursorArrow);
+                // Add the missing declaration for filledCircleAlgorithm  
             std::wcout << L"New drawing created. Screen cleared and colors reset." << std::endl;
             break;
-        case 1002: // Open
-            LoadShapesFromFile(hwnd); // Load handles redrawing to bitmap and invalidation
+        case 1002:
+            LoadFromFile(hwnd);
             break;
-        case 1003: // Save
-            SaveShapesToFile(hwnd);
+
+        case 1003:
+            SaveToFile(hwnd);
             break;
         case 1004: // Exit
             DestroyWindow(hwnd);
@@ -1333,6 +1565,51 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         case 6001: drawingMode = MODE_FLOOD_FILL; fillAlgorithm = FILL_ALGO_RECURSIVE; SetCursor(hCursorCross); std::wcout << L"Mode: Flood Fill (Recursive)" << std::endl; break;
         case 6002: drawingMode = MODE_FLOOD_FILL; fillAlgorithm = FILL_ALGO_NON_RECURSIVE; SetCursor(hCursorCross); std::wcout << L"Mode: Flood Fill (Non-Recursive)" << std::endl; break;
 
+        case 6003: // Re-purposed to be specific algorithm for filled circles
+            drawingMode = MODE_FILL_CIRCLE; // Set generic filled circle mode
+            filledCircleAlgorithm = FILL_CIRCLE_LINES; // Set specific algorithm
+            SetCursor(hCursorCross);
+            std::wcout << L"Mode: Fill Circle with Lines" << std::endl;
+            break;
+        case 6004: // Re-purposed to be specific algorithm for filled circles
+            drawingMode = MODE_FILL_CIRCLE; // Set generic filled circle mode
+            filledCircleAlgorithm = FILL_CIRCLE_CIRCLES; // Set specific algorithm
+            SetCursor(hCursorCross);
+            std::wcout << L"Mode: Fill Circle with Circles)" << std::endl;
+            break;
+        case 6006: // Hermite Square Fill
+            drawingMode = MODE_FILL_SQUARE_HERMIT;
+            controlPoints.clear();
+            break;
+
+            // NEW: Circle Fill Quarter Handlers
+        case IDM_QUARTER_ALL:
+            selectedFillQuarter = 0;
+            CheckMenuRadioItem(hMenu, IDM_QUARTER_ALL, IDM_QUARTER_4, IDM_QUARTER_ALL, MF_BYCOMMAND);
+            break;
+        case IDM_QUARTER_1:
+            selectedFillQuarter = 1;
+            CheckMenuRadioItem(hMenu, IDM_QUARTER_ALL, IDM_QUARTER_4, IDM_QUARTER_1, MF_BYCOMMAND);
+            break;
+        case IDM_QUARTER_2:
+            selectedFillQuarter = 2;
+            CheckMenuRadioItem(hMenu, IDM_QUARTER_ALL, IDM_QUARTER_4, IDM_QUARTER_2, MF_BYCOMMAND);
+            break;
+        case IDM_QUARTER_3:
+            selectedFillQuarter = 3;
+            CheckMenuRadioItem(hMenu, IDM_QUARTER_ALL, IDM_QUARTER_4, IDM_QUARTER_3, MF_BYCOMMAND);
+            break;
+        case IDM_QUARTER_4:
+            selectedFillQuarter = 4;
+            CheckMenuRadioItem(hMenu, IDM_QUARTER_ALL, IDM_QUARTER_4, IDM_QUARTER_4, MF_BYCOMMAND);
+            break;
+        case 6005: // Hermite Square Fill
+            drawingMode = MODE_FILL_SQUARE_HERMIT;
+            controlPoints.clear(); // Will need 2 points for a square (start and end of diagonal)
+            SetCursor(hCursorCross);
+            std::wcout << L"Mode: Hermite Square Fill (Click twice then drag)" << std::endl;
+            break;
+
             // Shapes Menu - Curves
         case 7001: drawingMode = MODE_CARDINAL_SPLINE; controlPoints.clear(); SetCursor(hCursorCross); std::wcout << L"Mode: Cardinal Spline (Click for points, Right-click to finish)" << std::endl; break;
 
@@ -1431,6 +1708,70 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             std::wcout << L"Polygon Vertex added: (" << startPoint.x << L", " << startPoint.y << L")" << std::endl;
             // Invalidate to make sure the temporary line from the previous point (if any) is redrawn.
             InvalidateRect(hwnd, NULL, FALSE);
+        }
+        else if (drawingMode == MODE_FILL_CIRCLE) {
+            // This is a single-click operation, so we capture all info now
+            DrawnShape newShape;
+            newShape.type = SHAPE_FILL_CIRCLE;
+
+            newShape.fillCircleData.center = startPoint;
+            newShape.fillCircleData.radius = 50; // Example fixed radius
+            newShape.fillCircleData.quarter = selectedFillQuarter;
+            newShape.fillCircleData.color = fillColor; // Use fillColor for filled shapes
+            newShape.fillCircleData.algorithm = filledCircleAlgorithm; // Use the global variable for selected algorithm
+
+            //// Draw to backing buffer immediately for visual feedback
+            //// The DrawFilledCircle function expects HDC, center x, center y, radius, quarter, color, algorithm
+            //HPEN hOldPen = (HPEN)SelectObject(hMemDC, GetStockObject(NULL_PEN)); // No outline for fill
+            //HBRUSH hBrush = CreateSolidBrush(newShape.fillCircleData.color); // Create brush for filling
+            //HBRUSH hOldBrush = (HBRUSH)SelectObject(hMemDC, hBrush);
+
+            DrawFilledCircle(hMemDC, newShape.fillCircleData.center.x, newShape.fillCircleData.center.y,
+                newShape.fillCircleData.radius, newShape.fillCircleData.quarter, newShape.fillCircleData.color, newShape.fillCircleData.algorithm);
+
+            //SelectObject(hMemDC, hOldBrush); // Restore original brush
+            //DeleteObject(hBrush);           // Delete the brush we created
+            //SelectObject(hMemDC, hOldPen);  // Restore original pen
+
+            drawnShapes.push_back(newShape);
+            InvalidateRect(hwnd, NULL, FALSE);
+            isDrawing = false; // Single click operation ends drawing
+            drawingMode = MODE_NONE; // Reset mode
+            SetCursor(LoadCursor(NULL, IDC_ARROW)); // Restore default cursor
+        }
+        else if (drawingMode == MODE_FILL_SQUARE_HERMIT) {
+            // Assume two clicks define opposite corners of the square
+            // For the first click, just store the point.
+            if (controlPoints.size() == 1) { // First click for square
+                RECT square = {
+                    min(controlPoints[0].x, controlPoints[1].x),
+                    min(controlPoints[0].y, controlPoints[1].y),
+                    max(controlPoints[0].x, controlPoints[1].x),
+                    max(controlPoints[0].y, controlPoints[1].y)
+                };
+            }
+            else if (controlPoints.size() == 2) { // Second click for square
+                RECT square = {
+                     min(controlPoints[0].x, controlPoints[1].x),
+                     min(controlPoints[0].y, controlPoints[1].y),
+                     max(controlPoints[0].x, controlPoints[1].x),
+                     max(controlPoints[0].y, controlPoints[1].y)
+                };
+
+                DrawnShape newShape;
+                newShape.type = SHAPE_FILL_SQUARE_HERMIT;
+                newShape.fillSquareHermit.square = square;
+                newShape.fillSquareHermit.color = drawColor;
+
+                drawnShapes.push_back(newShape);
+                RedrawAllShapesToBitmap(hMemDC);
+                InvalidateRect(hwnd, NULL, FALSE);
+                isDrawing = false; // Reset after two points
+                drawingMode = MODE_NONE;
+                SetCursor(hCursorArrow);
+                controlPoints.clear(); // Clear control points
+
+            }
         }
         break;
 
@@ -1551,6 +1892,31 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 case ELLIPSE_ALGO_POLAR: DrawPolarEllipse(hMemDC, startPoint.x, startPoint.y, newShape.ellipse.a, newShape.ellipse.b, drawColor); break;
                 case ELLIPSE_ALGO_MIDPOINT: DrawMidpointEllipse(hMemDC, startPoint.x, startPoint.y, newShape.ellipse.a, newShape.ellipse.b, drawColor); break;
                 }
+            }
+            else if (drawingMode == MODE_DRAW_GDI_CIRCLE) { // If you want a GDI circle by dragging
+                newShape.type = SHAPE_GDI_CIRCLE;
+                newShape.gdiCircle.center = startPoint;
+                newShape.gdiCircle.radius = CalculateDistance(startPoint, endPoint);
+                newShape.gdiCircle.color = drawColor; // GDI circle uses drawColor for outline
+            }
+            else if (drawingMode == MODE_FILL_SQUARE_HERMIT) {
+                newShape.type = SHAPE_FILL_SQUARE_HERMIT;
+                newShape.fillSquareHermit.square.left = min(startPoint.x, endPoint.x);
+                newShape.fillSquareHermit.square.top = min(startPoint.y, endPoint.y);
+                newShape.fillSquareHermit.square.right = max(startPoint.x, endPoint.x);
+                newShape.fillSquareHermit.square.bottom = max(startPoint.y, endPoint.y);
+                newShape.fillSquareHermit.color = fillColor; // Use fillColor for filled shapes
+
+                // Draw the shape directly to the backing buffer
+                FillSquareWithHermit(hMemDC, newShape.fillSquareHermit.square, newShape.fillSquareHermit.color);
+            }
+            else if (drawingMode == MODE_DRAW_GDI_CIRCLE) { // If you've added this drawing mode
+                newShape.type = SHAPE_GDI_CIRCLE;
+                newShape.gdiCircle.center = startPoint;
+                newShape.gdiCircle.radius = static_cast<int>(sqrt(pow(endPoint.x - startPoint.x, 2) + pow(endPoint.y - startPoint.y, 2)));
+                newShape.gdiCircle.color = drawColor;
+
+                DrawCircleOutline(hMemDC, newShape.gdiCircle.center.x, newShape.gdiCircle.center.y, newShape.gdiCircle.radius, drawColor);
             }
             drawnShapes.push_back(newShape);
             InvalidateRect(hwnd, NULL, FALSE); // Just invalidate, WM_PAINT will blit
@@ -1702,7 +2068,6 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
     }
     return 0;
 }
-
 // =============================================
 // Register Class
 // =============================================
@@ -1727,7 +2092,6 @@ void RegisterMyClass(HINSTANCE hInstance) {
         return;
     }
 }
-
 // =============================================
 // WinMain
 // =============================================
