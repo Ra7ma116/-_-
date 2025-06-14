@@ -1146,7 +1146,6 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
 
     switch (message) {
     case WM_CREATE:
-        // ... (existing code for WM_CREATE) ...
 
         // Initialize clientRect
         GetClientRect(hwnd, &clientRect);
@@ -1564,6 +1563,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             if (controlPoints.size() >= 4) {
                 DrawnShape newShape;
                 newShape.type = SHAPE_CARDINAL_SPLINE;
+                new (&newShape.polygon) SplineShape();
                 newShape.spline.points = controlPoints;
                 newShape.spline.tension = 0.0;
                 newShape.spline.color = drawColor;
@@ -1592,6 +1592,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             if (currentPolygonVertices.size() >= 3) { // A polygon needs at least 3 vertices
                 DrawnShape newShape;
                 newShape.type = SHAPE_POLYGON;
+                new (&newShape.polygon) PolygonShape();
                 newShape.polygon.vertices = currentPolygonVertices; // Copy the vertices
                 newShape.polygon.drawcolor = drawColor;
                 newShape.polygon.fill = fillColor;
