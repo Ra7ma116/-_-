@@ -24,7 +24,7 @@ enum DrawingMode {
     MODE_DRAW_ELLIPSE,
     MODE_FLOOD_FILL,
     MODE_CARDINAL_SPLINE,
-	MODE_DRAW_POLYGON
+    MODE_DRAW_POLYGON // Add this
 };
 
 enum LineAlgoType {
@@ -53,22 +53,22 @@ enum FillAlgoType {
     FILL_ALGO_NON_RECURSIVE
 };
 
+enum PolygonFillType {
+    POLYGON_FILL_CONVEX,
+    POLYGON_FILL_NON_CONVEX
+};
+
 enum ShapeType {
     SHAPE_LINE,
     SHAPE_CIRCLE,
     SHAPE_ELLIPSE,
     SHAPE_FILLED_REGION,
     SHAPE_CARDINAL_SPLINE,
-    POLYGON_SHAPE
+    SHAPE_POLYGON // Add this
 };
 
-enum PolygonAlgoType {
-	POLYGON_ALGO_SIMPLE,
-	POLYGON_ALGO_EAR_CLIPPING,
-	POLYGON_ALGO_SUTHERLAND_HODGMAN
-};
+
    
-
 // =============================================
 // Data Structures
 // =============================================
@@ -111,9 +111,10 @@ struct SplineShape {
 };
 
 struct PolygonShape {
-    std::vector<POINT> points;
-    COLORREF drawColor;
-    COLORREF fillColor;
+    std::vector<POINT> vertices;
+    COLORREF drawcolor;
+	COLORREF fill; // Color for the polygon fill
+    PolygonFillType fillType; // To distinguish between algorithms if needed
 };
 
 struct DrawnShape {
@@ -124,10 +125,13 @@ struct DrawnShape {
         EllipseShape ellipse;
         FilledRegionShape filledRegion;
         SplineShape spline;
-        PolygonShape polygon;
+        PolygonShape polygon; // Add this
     };
 
+    // Default constructor to avoid undefined behavior for union members
     DrawnShape() : type(SHAPE_LINE) {}
+
+    // Copy constructor
     DrawnShape(const DrawnShape& other) : type(other.type) {
         switch (type) {
         case SHAPE_LINE: line = other.line; break;
@@ -135,27 +139,29 @@ struct DrawnShape {
         case SHAPE_ELLIPSE: ellipse = other.ellipse; break;
         case SHAPE_FILLED_REGION: filledRegion = other.filledRegion; break;
         case SHAPE_CARDINAL_SPLINE:
-            new (&spline) SplineShape();
+            new (&spline) SplineShape(); // Placement new
             spline.points = other.spline.points;
             spline.tension = other.spline.tension;
             spline.color = other.spline.color;
             break;
-        case POLYGON_SHAPE:
-            // Use placement new to construct the vector within the union member
-            new (&polygon) PolygonShape();
-            polygon.points = other.polygon.points;
-            polygon.drawColor = other.polygon.drawColor;
-            polygon.fillColor = other.polygon.fillColor;
+        case SHAPE_POLYGON:
+            new (&polygon) PolygonShape(); // Placement new
+            polygon.vertices = other.polygon.vertices;
+            polygon.drawcolor = other.polygon.drawcolor;
+			polygon.fill = other.polygon.fill; // Assuming fill is a COLORREF
+            polygon.fillType = other.polygon.fillType;
             break;
         }
     }
 
+    // Assignment operator
     DrawnShape& operator=(const DrawnShape& other) {
         if (this != &other) {
+            // Explicitly destroy current non-POD members if they were active
             if (type == SHAPE_CARDINAL_SPLINE) {
                 spline.~SplineShape();
             }
-            else if (type == POLYGON_SHAPE) {
+            else if (type == SHAPE_POLYGON) {
                 polygon.~PolygonShape();
             }
 
@@ -166,32 +172,34 @@ struct DrawnShape {
             case SHAPE_ELLIPSE: ellipse = other.ellipse; break;
             case SHAPE_FILLED_REGION: filledRegion = other.filledRegion; break;
             case SHAPE_CARDINAL_SPLINE:
-                new (&spline) SplineShape();
+                new (&spline) SplineShape(); // Placement new
                 spline.points = other.spline.points;
                 spline.tension = other.spline.tension;
                 spline.color = other.spline.color;
                 break;
-            case POLYGON_SHAPE:
+            case SHAPE_POLYGON:
                 new (&polygon) PolygonShape(); // Placement new
-                polygon.points = other.polygon.points;
-                polygon.drawColor = other.polygon.drawColor;
-                polygon.fillColor = other.polygon.fillColor;
+                polygon.vertices = other.polygon.vertices;
+                polygon.drawcolor = other.polygon.drawcolor;
+                polygon.fill = other.polygon.fill; // Assuming fill is a COLORREF
+                polygon.fillType = other.polygon.fillType;
                 break;
             }
         }
         return *this;
     }
 
+    // Destructor
     ~DrawnShape() {
+        // Explicitly call destructor for non-POD members if they were active
         if (type == SHAPE_CARDINAL_SPLINE) {
             spline.~SplineShape();
         }
-        else if (type == POLYGON_SHAPE) {
+        else if (type == SHAPE_POLYGON) {
             polygon.~PolygonShape();
         }
     }
 };
-
 
 // =============================================
 // Global Variables
@@ -211,13 +219,16 @@ LineAlgoType lineAlgorithm = LINE_ALGO_BRESENHAM;
 CircleAlgoType circleAlgorithm = CIRCLE_ALGO_MIDPOINT;
 EllipseAlgoType ellipseAlgorithm = ELLIPSE_ALGO_MIDPOINT;
 FillAlgoType fillAlgorithm = FILL_ALGO_NON_RECURSIVE;
-PolygonAlgoType polygonAlgorithm = POLYGON_ALGO_SIMPLE;
+PolygonFillType polygonFillType = POLYGON_FILL_NON_CONVEX; // Default to non-convex for general polygons
 
 bool isDrawing = false;
 POINT startPoint;
 POINT endPoint;
 std::vector<POINT> controlPoints;
 std::vector<DrawnShape> drawnShapes;
+// For polygon drawing
+std::vector<POINT> currentPolygonVertices; // Stores vertices for the polygon being drawn
+bool isPolygonStarted = false;
 
 // =============================================
 // Utility Functions
@@ -238,6 +249,18 @@ void swapPoints(POINT& p1, POINT& p2) {
     p1 = p2;
     p2 = temp;
 }
+
+struct Edge {
+    int yMax;
+    double x;
+    double invSlope; // 1/m = dx/dy
+    int yMin; // Added for sorting and easier edge processing
+
+    // For sorting AEL by x
+    bool operator<(const Edge& other) const {
+        return x < other.x;
+    }
+};
 
 // =============================================
 // Drawing Algorithms
@@ -634,101 +657,152 @@ void DrawCardinalSpline(HDC targetDC, const std::vector<POINT>& points, double t
 }
 
 // ----------------- Polygon Algorithms -----------------
-
-void DrawPolygonOutline(HDC hdc, const std::vector<POINT>& polygon, COLORREF color) {
-    if (polygon.empty()) return;
-    HPEN hPen = CreatePen(PS_SOLID, 1, color);
-    HPEN hOldPen = (HPEN)SelectObject(hdc, hPen);
-
-    MoveToEx(hdc, polygon[0].x, polygon[0].y, NULL);
-    for (size_t i = 1; i < polygon.size(); i++) {
-        LineTo(hdc, polygon[i].x, polygon[i].y);
+// Function to draw an outline of a polygon
+void DrawPolygonOutline(HDC hdc, const std::vector<POINT>& vertices, COLORREF color) {
+    if (vertices.empty()) return;
+    for (size_t i = 0; i < vertices.size(); ++i) {
+        POINT p1 = vertices[i];
+        POINT p2 = vertices[(i + 1) % vertices.size()]; // Connect last to first
+        DrawLine(hdc, p1.x, p1.y, p2.x, p2.y, color); // Use your Bresenham/DDA
     }
-    LineTo(hdc, polygon[0].x, polygon[0].y); // Close the shape
-
-    SelectObject(hdc, hOldPen);
-    DeleteObject(hPen);
 }
 
-void ScanlineFill(HDC hdc, const std::vector<POINT>& polygon, COLORREF fillColor) {
-    if (polygon.size() < 3) return;
+// =========================================================================================
+// Convex Polygon Fill (simpler scanline)
+// Assumes that the polygon vertices are ordered (e.g., clockwise or counter-clockwise)
+// and that the polygon is truly convex.
+// This version uses an approach suitable for convex polygons by finding min/max X on each scanline.
+// =========================================================================================
+void ConvexPolygonFill(HDC hdc, const std::vector<POINT>& vertices, COLORREF color) {
+    if (vertices.size() <= 3) return;
 
-    // 1. Find y-range of polygon
-    int ymin = polygon[0].y, ymax = polygon[0].y;
-    for (const auto& p : polygon) {
-        ymin = min(ymin, p.y);
-        ymax = max(ymax, p.y);
+    int minY = INT_MAX;
+    int maxY = INT_MIN;
+
+
+    for (const auto& p : vertices) {
+        if (p.y < minY) minY = p.y;
+        if (p.y > maxY) maxY = p.y;
     }
 
-    // Clip to client area
-    // Make sure clientRect is accessible (it appears to be a global in your code)
-    ymin = max(ymin, 0);
-    ymax = min(ymax, clientRect.bottom - 1);
+    for (int y = minY; y <= maxY; ++y) {
+        std::vector<double> intersections;
+        for (size_t i = 0; i < vertices.size(); ++i) {
+            POINT p1 = vertices[i];
+            POINT p2 = vertices[(i + 1) % vertices.size()];
 
-    // 2. Process each scanline
-    for (int y = ymin; y <= ymax; y++) {
-        std::vector<int> intersections;
+            if ((p1.y <= y && p2.y > y) || (p2.y <= y && p1.y > y)) { // Edge crosses scanline
+                if (p1.y == p2.y) continue; // Horizontal line, ignore for intersection calculation
 
-        // 3. Find all edge intersections
-        for (size_t i = 0; i < polygon.size(); i++) {
-            const POINT& p1 = polygon[i];
-            const POINT& p2 = polygon[(i + 1) % polygon.size()];
-
-            // Make sure p1 always refers to the point with the smaller y-coordinate
-            // to simplify the intersection logic.
-            POINT startP = p1;
-            POINT endP = p2;
-
-            if (startP.y > endP.y) {
-                std::swap(startP, endP);
-            }
-
-            // Skip horizontal edges - they don't contribute to scanline intersections for filling
-            if (startP.y == endP.y) continue;
-
-            // Check if the scanline y crosses this edge.
-            // This condition correctly handles vertices to avoid double counting or missing points.
-            // It includes the lower endpoint of an edge and excludes the upper endpoint.
-            if (y >= startP.y && y < endP.y) {
-                // Calculate intersection x-coordinate using floating point for precision
-                float x = startP.x + (float)(y - startP.y) * (endP.x - startP.x) / (float)(endP.y - startP.y);
-                intersections.push_back((int)round(x)); // Round to nearest integer pixel
+                double x_intersect = p1.x + (double)(y - p1.y) * (p2.x - p1.x) / (p2.y - p1.y);
+                intersections.push_back(x_intersect);
             }
         }
-
-        // 4. Sort intersections
         std::sort(intersections.begin(), intersections.end());
 
-        // Debugging: Print intersections for current scanline
-        // std::wcout << L"Scanline Y: " << y << L", Intersections: ";
-        // for (int x_val : intersections) {
-        //     std::wcout << x_val << L" ";
-        // }
-        // std::wcout << std::endl;
-
-
-        // 5. Fill between pairs of intersections
-        // You must have an even number of intersections for a valid polygon fill
-        if (intersections.size() % 2 != 0) {
-            // This indicates a problem with the polygon or the intersection logic
-            // It's a common debugging point.
-            // std::wcout << L"Warning: Odd number of intersections for scanline " << y << std::endl;
-            // You might want to skip filling this scanline or log an error.
-            continue; // Skip filling this scanline if intersections are odd
-        }
-
+        // Fill between pairs of intersections
         for (size_t i = 0; i + 1 < intersections.size(); i += 2) {
-            int x1 = max(0, intersections[i]);
-            int x2 = min(clientRect.right - 1, intersections[i + 1]);
-
-            // Ensure x1 is not greater than x2 (can happen with very thin polygons or rounding)
-            if (x1 > x2) continue;
-
-            // Draw horizontal line segment
-            for (int x = x1; x <= x2; x++) {
-                SetPixelSafe(hdc, x, y, fillColor);
+            int x1 = Round(intersections[i]);
+            int x2 = Round(intersections[i + 1]);
+            for (int x = x1; x <= x2; ++x) {
+                SetPixelSafe(hdc, x, y, color);
             }
         }
+    }
+}
+
+// =========================================================================================
+// Non-Convex Polygon Fill (General Scanline Algorithm)
+// =========================================================================================
+void NonConvexPolygonFill(HDC hdc, const std::vector<POINT>& vertices, COLORREF color) {
+    if (vertices.size() <= 3) return;
+
+    // 1. Build Edge Table (ET)
+    // ET is an array of lists. Each list contains edges sorted by yMin.
+    // The index of the array corresponds to the y-coordinate.
+    int minY = INT_MAX;
+    int maxY = INT_MIN;
+
+    for (const auto& p : vertices) {
+        if (p.y < minY) minY = p.y;
+        if (p.y > maxY) maxY = p.y;
+    }
+
+    std::vector<std::vector<Edge>> edgeTable(maxY + 1); // Size based on max Y
+
+    for (size_t i = 0; i < vertices.size(); ++i) {
+        POINT p1 = vertices[i];
+        POINT p2 = vertices[(i + 1) % vertices.size()];
+
+        // Skip horizontal lines as they don't contribute to intersections
+        if (p1.y == p2.y) continue;
+
+        Edge edge;
+        if (p1.y < p2.y) {
+            edge.yMin = p1.y;
+            edge.yMax = p2.y;
+            edge.x = p1.x;
+            edge.invSlope = (double)(p2.x - p1.x) / (p2.y - p1.y);
+        }
+        else {
+            edge.yMin = p2.y;
+            edge.yMax = p1.y;
+            edge.x = p2.x;
+            edge.invSlope = (double)(p1.x - p2.x) / (p1.y - p2.y);
+        }
+        edgeTable[edge.yMin].push_back(edge);
+    }
+
+    // 2. Initialize Active Edge List (AEL)
+    std::vector<Edge> activeEdgeList;
+
+    // 3. Process Scanlines
+    for (int y = minY; y <= maxY; ++y) {
+        // Add new edges from ET to AEL
+        for (const auto& edge : edgeTable[y]) {
+            activeEdgeList.push_back(edge);
+        }
+
+        // Remove edges from AEL that have reached their yMax
+        activeEdgeList.erase(
+            std::remove_if(activeEdgeList.begin(), activeEdgeList.end(),
+                [y](const Edge& e) { return e.yMax == y; }), // yMax is exclusive for the last pixel
+            activeEdgeList.end()
+        );
+
+        // Sort AEL by current x-coordinate
+        std::sort(activeEdgeList.begin(), activeEdgeList.end(), [](const Edge& a, const Edge& b) {
+            return a.x < b.x;
+            });
+
+        // Fill pixels between pairs of edges in AEL
+        for (size_t i = 0; i + 1 < activeEdgeList.size(); i += 2) {
+            int x1 = Round(activeEdgeList[i].x);
+            int x2 = Round(activeEdgeList[i + 1].x);
+
+            for (int x = x1; x <= x2; ++x) {
+                SetPixelSafe(hdc, x, y, color);
+            }
+        }
+
+        // Update x-coordinates for edges in AEL for the next scanline
+        for (auto& edge : activeEdgeList) {
+            edge.x += edge.invSlope;
+        }
+    }
+}
+
+// Wrapper for polygon drawing, allowing selection of fill algorithm
+void DrawFilledPolygon(HDC hdc, const std::vector<POINT>& vertices, COLORREF color, PolygonFillType fillType , COLORREF fillcolor) {
+    // First, draw the outline if you want
+    DrawPolygonOutline(hdc, vertices, color); // Or a different color if needed
+
+    // Then, fill the polygon
+    if (fillType == POLYGON_FILL_CONVEX) {
+        ConvexPolygonFill(hdc, vertices, fillcolor);
+    }
+    else { // Default to non-convex for general case
+        NonConvexPolygonFill(hdc, vertices, fillcolor);
     }
 }
 
@@ -781,10 +855,10 @@ void RedrawAllShapesToBitmap(HDC targetDC) {
         case SHAPE_CARDINAL_SPLINE:
             DrawCardinalSpline(targetDC, shape.spline.points, shape.spline.tension, shape.spline.color);
             break;
-        case POLYGON_SHAPE:
-            ScanlineFill(targetDC, shape.polygon.points, shape.polygon.fillColor);
-            DrawPolygonOutline(targetDC, shape.polygon.points, shape.polygon.drawColor);
+        case SHAPE_POLYGON:
+            DrawFilledPolygon(targetDC, shape.polygon.vertices, shape.polygon.drawcolor, shape.polygon.fillType, shape.polygon.fill);
             break;
+        
         }
     }
 }
@@ -801,7 +875,7 @@ void SaveShapesToFile(HWND hwnd) {
     ofn.hwndOwner = hwnd;
     ofn.lpstrFile = szFile;
     ofn.lpstrFile[0] = L'\0';
-    ofn.nMaxFile = sizeof(szFile) / sizeof(szFile[0]); // Correct size calculation
+    ofn.nMaxFile = sizeof(szFile) / sizeof(szFile[0]);
     ofn.lpstrFilter = L"Drawing Files (*.drw)\0*.drw\0All Files (*.*)\0*.*\0";
     ofn.nFilterIndex = 1;
     ofn.Flags = OFN_PATHMUSTEXIST | OFN_OVERWRITEPROMPT;
@@ -831,7 +905,7 @@ void SaveShapesToFile(HWND hwnd) {
                 case SHAPE_FILLED_REGION:
                     outFile.write(reinterpret_cast<const char*>(&shape.filledRegion), sizeof(FilledRegionShape));
                     break;
-                case SHAPE_CARDINAL_SPLINE: { // Added curly braces for scope
+                case SHAPE_CARDINAL_SPLINE: {
                     size_t numPoints = shape.spline.points.size();
                     outFile.write(reinterpret_cast<const char*>(&numPoints), sizeof(numPoints));
                     outFile.write(reinterpret_cast<const char*>(shape.spline.points.data()), numPoints * sizeof(POINT));
@@ -839,12 +913,14 @@ void SaveShapesToFile(HWND hwnd) {
                     outFile.write(reinterpret_cast<const char*>(&shape.spline.color), sizeof(shape.spline.color));
                     break;
                 }
-                case POLYGON_SHAPE: { // Corrected enum, added curly braces for scope, consistent binary write
-                    size_t numPoints = shape.polygon.points.size();
-                    outFile.write(reinterpret_cast<const char*>(&numPoints), sizeof(numPoints));
-                    outFile.write(reinterpret_cast<const char*>(shape.polygon.points.data()), numPoints * sizeof(POINT));
-                    outFile.write(reinterpret_cast<const char*>(&shape.polygon.drawColor), sizeof(shape.polygon.drawColor));
-                    outFile.write(reinterpret_cast<const char*>(&shape.polygon.fillColor), sizeof(shape.polygon.fillColor));
+                case SHAPE_POLYGON: { // NEW CASE FOR POLYGON
+                    size_t numVertices = shape.polygon.vertices.size();
+                    outFile.write(reinterpret_cast<const char*>(&numVertices), sizeof(numVertices));
+                    outFile.write(reinterpret_cast<const char*>(shape.polygon.vertices.data()), numVertices * sizeof(POINT));
+                    outFile.write(reinterpret_cast<const char*>(&shape.polygon.drawcolor), sizeof(shape.polygon.drawcolor));
+                    outFile.write(reinterpret_cast<const char*>(&shape.polygon.fillType), sizeof(shape.polygon.fillType));
+                    outFile.write(reinterpret_cast<const char*>(&shape.polygon.fill), sizeof(shape.polygon.fill));
+
                     break;
                 }
                 }
@@ -866,7 +942,7 @@ void LoadShapesFromFile(HWND hwnd) {
     ofn.hwndOwner = hwnd;
     ofn.lpstrFile = szFile;
     ofn.lpstrFile[0] = L'\0';
-    ofn.nMaxFile = sizeof(szFile) / sizeof(szFile[0]); // Correct size calculation
+    ofn.nMaxFile = sizeof(szFile) / sizeof(szFile[0]);
     ofn.lpstrFilter = L"Drawing Files (*.drw)\0*.drw\0All Files (*.*)\0*.*\0";
     ofn.nFilterIndex = 1;
     ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST;
@@ -900,8 +976,8 @@ void LoadShapesFromFile(HWND hwnd) {
                 case SHAPE_FILLED_REGION:
                     inFile.read(reinterpret_cast<char*>(&newShape.filledRegion), sizeof(FilledRegionShape));
                     break;
-                case SHAPE_CARDINAL_SPLINE: { // Added curly braces for scope
-                    size_t numPoints; // Correctly scoped
+                case SHAPE_CARDINAL_SPLINE: {
+                    size_t numPoints;
                     inFile.read(reinterpret_cast<char*>(&numPoints), sizeof(numPoints));
                     newShape.spline.points.resize(numPoints);
                     inFile.read(reinterpret_cast<char*>(newShape.spline.points.data()), numPoints * sizeof(POINT));
@@ -909,13 +985,14 @@ void LoadShapesFromFile(HWND hwnd) {
                     inFile.read(reinterpret_cast<char*>(&newShape.spline.color), sizeof(newShape.spline.color));
                     break;
                 }
-                case POLYGON_SHAPE: { // Corrected enum, added curly braces for scope, consistent binary read
-                    size_t numPoints; // Correctly scoped
-                    inFile.read(reinterpret_cast<char*>(&numPoints), sizeof(numPoints));
-                    newShape.polygon.points.resize(numPoints);
-                    inFile.read(reinterpret_cast<char*>(newShape.polygon.points.data()), numPoints * sizeof(POINT));
-                    inFile.read(reinterpret_cast<char*>(&newShape.polygon.drawColor), sizeof(newShape.polygon.drawColor));
-                    inFile.read(reinterpret_cast<char*>(&newShape.polygon.fillColor), sizeof(newShape.polygon.fillColor));
+                case SHAPE_POLYGON: { // NEW CASE FOR POLYGON
+                    size_t numVertices;
+                    inFile.read(reinterpret_cast<char*>(&numVertices), sizeof(numVertices));
+                    newShape.polygon.vertices.resize(numVertices);
+                    inFile.read(reinterpret_cast<char*>(newShape.polygon.vertices.data()), numVertices * sizeof(POINT));
+                    inFile.read(reinterpret_cast<char*>(&newShape.polygon.drawcolor), sizeof(newShape.polygon.drawcolor));
+                    inFile.read(reinterpret_cast<char*>(&newShape.polygon.fillType), sizeof(newShape.polygon.fillType));
+                    inFile.read(reinterpret_cast<char*>(&newShape.polygon.fill), sizeof(newShape.polygon.fill));
                     break;
                 }
                 }
@@ -935,7 +1012,6 @@ void LoadShapesFromFile(HWND hwnd) {
 // =============================================
 // Menu Functions
 // =============================================
-
 void CreateMainMenu(HWND hwnd) {
     HMENU hMenu = CreateMenu();
     HMENU hFileMenu = CreatePopupMenu();
@@ -952,7 +1028,7 @@ void CreateMainMenu(HWND hwnd) {
     HMENU hEditMenu = CreatePopupMenu();
     HMENU hOptionsMenu = CreatePopupMenu();
     HMENU hCursorMenu = CreatePopupMenu();
-    HMENU hSubMenuPolygons = CreatePopupMenu();
+    HMENU hSubMenuPolygons = CreatePopupMenu(); // Added for polygon options
 
     // File Menu
     AppendMenu(hMenu, MF_POPUP, (UINT_PTR)hFileMenu, L"&File");
@@ -1037,9 +1113,12 @@ void CreateMainMenu(HWND hwnd) {
     AppendMenu(hShapesMenu, MF_POPUP, (UINT_PTR)hCurveMenu, L"&Curves");
     AppendMenu(hCurveMenu, MF_STRING, 7001, L"&Cardinal Spline (4+ points, right click to finish)");
 
-    // Shapes Menu - Polygons (New)
-    AppendMenu(hSubMenuPolygons, MF_STRING, 7101, L"Draw Polygon"); 
+    // Polygons Menu (New)
     AppendMenu(hShapesMenu, MF_POPUP, (UINT_PTR)hSubMenuPolygons, L"&Polygons");
+    AppendMenu(hSubMenuPolygons, MF_STRING, 7101, L"&Draw Polygon (Click points, Right-click to finish)");
+    AppendMenu(hSubMenuPolygons, MF_SEPARATOR, 0, NULL);
+    AppendMenu(hSubMenuPolygons, MF_STRING, 7102, L"Set Fill: &Convex");
+    AppendMenu(hSubMenuPolygons, MF_STRING, 7103, L"Set Fill: &Non-Convex");
 
     // Edit Menu
     AppendMenu(hMenu, MF_POPUP, (UINT_PTR)hEditMenu, L"&Edit");
@@ -1056,7 +1135,6 @@ void CreateMainMenu(HWND hwnd) {
 
     SetMenu(hwnd, hMenu);
 }
-
 // =============================================
 // Window Procedure
 // =============================================
@@ -1068,6 +1146,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
 
     switch (message) {
     case WM_CREATE:
+        // ... (existing code for WM_CREATE) ...
+
         // Initialize clientRect
         GetClientRect(hwnd, &clientRect);
 
@@ -1103,7 +1183,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         break;
 
     case WM_SIZE:
-        // Resize the backing buffer when the window size changes
+        // ... (existing code for WM_SIZE) ...
         GetClientRect(hwnd, &clientRect);
         if (hMemDC && hOldBitmap) {
             SelectObject(hMemDC, hOldBitmap); // Deselect old bitmap
@@ -1126,6 +1206,10 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         case 1001: // New
             drawnShapes.clear();
             controlPoints.clear();
+            // Clear current polygon points too
+            currentPolygonVertices.clear();
+            isPolygonStarted = false;
+
             drawColor = RGB(0, 0, 0);
             fillColor = RGB(255, 0, 0);
             bgColor = RGB(255, 255, 255);
@@ -1254,17 +1338,29 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         case 7001: drawingMode = MODE_CARDINAL_SPLINE; controlPoints.clear(); SetCursor(hCursorCross); std::wcout << L"Mode: Cardinal Spline (Click for points, Right-click to finish)" << std::endl; break;
 
             // Shapes Menu - Polygons
-        case 7101: 
+        case 7101:
             drawingMode = MODE_DRAW_POLYGON;
-            controlPoints.clear();
+            isPolygonStarted = false; // Reset for a new polygon
+            currentPolygonVertices.clear(); // Clear any previous temporary vertices
             SetCursor(hCursorCross);
             std::wcout << L"Mode: Draw Polygon (Click for points, Right-click to finish)" << std::endl;
+            break;
+        case 7102:
+            polygonFillType = POLYGON_FILL_CONVEX;
+            std::wcout << L"Polygon Fill Algorithm: Convex" << std::endl;
+            break;
+        case 7103:
+            polygonFillType = POLYGON_FILL_NON_CONVEX;
+            std::wcout << L"Polygon Fill Algorithm: Non-Convex" << std::endl;
             break;
 
             // Edit Menu
         case 8001: // Clear Screen
             drawnShapes.clear();
             controlPoints.clear();
+            currentPolygonVertices.clear(); // Clear polygon vertices too
+            isPolygonStarted = false;
+
             RedrawAllShapesToBitmap(hMemDC); // Clear bitmap to BG color
             InvalidateRect(hwnd, NULL, FALSE);
             drawingMode = MODE_NONE;
@@ -1306,6 +1402,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             newShape.filledRegion.algo = fillAlgorithm;
             newShape.filledRegion.targetColor = targetColor; // Store original color for re-draw
 
+            // Directly apply fill to the backing buffer
             if (fillAlgorithm == FILL_ALGO_RECURSIVE) {
                 FloodFillRecursive(hMemDC, startPoint.x, startPoint.y, fillColor, targetColor);
             }
@@ -1315,19 +1412,92 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             drawnShapes.push_back(newShape);
             InvalidateRect(hwnd, NULL, FALSE); // Invalidate to trigger WM_PAINT and blit
         }
-        else if (drawingMode == MODE_CARDINAL_SPLINE || drawingMode == MODE_DRAW_POLYGON) {
+        else if (drawingMode == MODE_CARDINAL_SPLINE) {
             controlPoints.push_back(startPoint);
             // Redraw to show the placed control point
             InvalidateRect(hwnd, NULL, FALSE);
-            std::wcout << L"Control Point added: (" << startPoint.x << L", " << startPoint.y << L")" << std::endl;
+            std::wcout << L"Cardinal Spline Control Point added: (" << startPoint.x << L", " << startPoint.y << L")" << std::endl;
+        }
+        else if (drawingMode == MODE_DRAW_POLYGON) {
+            if (!isPolygonStarted) {
+                currentPolygonVertices.clear(); // Ensure it's clear for a new polygon
+                isPolygonStarted = true;
+            }
+            currentPolygonVertices.push_back(startPoint);
+            // Draw a point for the vertex immediately on screen
+            HDC tempHDC = GetDC(hwnd);
+            SetPixel(tempHDC, startPoint.x, startPoint.y, drawColor);
+            ReleaseDC(hwnd, tempHDC);
+
+            std::wcout << L"Polygon Vertex added: (" << startPoint.x << L", " << startPoint.y << L")" << std::endl;
+            // Invalidate to make sure the temporary line from the previous point (if any) is redrawn.
+            InvalidateRect(hwnd, NULL, FALSE);
         }
         break;
 
     case WM_MOUSEMOVE:
-        if (isDrawing && drawingMode != MODE_FLOOD_FILL && drawingMode != MODE_CARDINAL_SPLINE && drawingMode != MODE_DRAW_POLYGON) {
+        if (isDrawing) {
             endPoint.x = LOWORD(lParam);
             endPoint.y = HIWORD(lParam);
-            InvalidateRect(hwnd, NULL, FALSE); // Invalidate to draw the preview, but not clear entire window
+
+            HDC hdcWindow = GetDC(hwnd);
+
+            // Re-blit the saved bitmap to clear previous temporary drawing
+            BitBlt(hdcWindow, 0, 0, clientRect.right, clientRect.bottom, hMemDC, 0, 0, SRCCOPY);
+
+            // Draw the current transient shape directly onto the window HDC for immediate feedback
+            switch (drawingMode) {
+            case MODE_DRAW_LINE:
+                DrawLine(hdcWindow, startPoint.x, startPoint.y, endPoint.x, endPoint.y, drawColor);
+                break;
+            case MODE_DRAW_CIRCLE: {
+                int r = static_cast<int>(sqrt(pow(endPoint.x - startPoint.x, 2) + pow(endPoint.y - startPoint.y, 2)));
+                DrawDirectCircle(hdcWindow, startPoint.x, startPoint.y, r, drawColor);
+                break;
+            }
+            case MODE_DRAW_ELLIPSE: {
+                int a = abs(endPoint.x - startPoint.x);
+                int b = abs(endPoint.y - startPoint.y);
+                DrawDirectEllipse(hdcWindow, startPoint.x, startPoint.y, a, b, drawColor);
+                break;
+            }
+            case MODE_CARDINAL_SPLINE:
+                // Draw control points
+                for (const auto& p : controlPoints) {
+                    SetPixelSafe(hdcWindow, p.x, p.y, RGB(255, 0, 255)); // Magenta for control points
+                    DrawDirectCircle(hdcWindow, p.x, p.y, 2, RGB(255, 0, 255)); // Small circle at point
+                }
+                // Draw temporary line from last control point to current mouse position
+                if (!controlPoints.empty()) {
+                    DrawLine(hdcWindow, controlPoints.back().x, controlPoints.back().y, endPoint.x, endPoint.y, drawColor);
+                }
+                // If enough points, draw preview spline
+                if (controlPoints.size() >= 4) {
+                    DrawCardinalSpline(hdcWindow, controlPoints, 0.0, drawColor);
+                }
+                break;
+            case MODE_DRAW_POLYGON:
+                for (const auto& p : currentPolygonVertices) {
+                    SetPixelSafe(hdcWindow, p.x, p.y, RGB(255, 0, 255));
+                    DrawDirectCircle(hdcWindow, p.x, p.y, 2, RGB(255, 0, 255));
+                }
+                for (size_t i = 0; i + 1 < currentPolygonVertices.size(); ++i) {
+                    DrawLine(hdcWindow, currentPolygonVertices[i].x, currentPolygonVertices[i].y,
+                        currentPolygonVertices[i + 1].x, currentPolygonVertices[i + 1].y, drawColor);
+                }
+                // This is the fix:
+                if (currentPolygonVertices.size() > 2) {
+                    DrawLine(hdcWindow, currentPolygonVertices.back().x, currentPolygonVertices.back().y,
+                        currentPolygonVertices[0].x, currentPolygonVertices[0].y, drawColor);
+                }
+                // temporary line to mouse
+                if (!currentPolygonVertices.empty()) {
+                    DrawLine(hdcWindow, currentPolygonVertices.back().x, currentPolygonVertices.back().y,
+                        endPoint.x, endPoint.y, drawColor);
+                }
+                break;
+            }
+            ReleaseDC(hwnd, hdcWindow);
         }
         break;
 
@@ -1409,7 +1579,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 std::wcout << L"Cardinal Spline finished." << std::endl;
             }
             else {
-                MessageBox(hwnd, L"Cardinal Spline requires at least 4 control points. Right click to cancel or continue adding points.", L"Warning", MB_OK | MB_ICONWARNING);
+                MessageBox(hwnd, L"Cardinal Spline requires at least 4 control points. Drawing cancelled.", L"Warning", MB_OK | MB_ICONWARNING);
                 controlPoints.clear();
                 RedrawAllShapesToBitmap(hMemDC); // Clear preview points if cancelled
                 InvalidateRect(hwnd, NULL, FALSE);
@@ -1419,38 +1589,37 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             return 0; // Important: Return 0 to indicate we handled the message
         }
         else if (drawingMode == MODE_DRAW_POLYGON) {
-            if (controlPoints.size() >= 3) { // Need at least 3 points for a polygon
+            if (currentPolygonVertices.size() >= 3) { // A polygon needs at least 3 vertices
                 DrawnShape newShape;
-                newShape.type = POLYGON_SHAPE;
-                newShape.polygon.points = controlPoints;
-                newShape.polygon.drawColor = drawColor;
-                newShape.polygon.fillColor = fillColor;
+                newShape.type = SHAPE_POLYGON;
+                newShape.polygon.vertices = currentPolygonVertices; // Copy the vertices
+                newShape.polygon.drawcolor = drawColor;
+                newShape.polygon.fill = fillColor;
+                newShape.polygon.fillType = polygonFillType; // Use the selected fill type
 
-                // Fill the polygon first (so outline draws on top)
-                ScanlineFill(hMemDC, newShape.polygon.points, newShape.polygon.fillColor);
-
-                // Draw the outline
-                DrawPolygonOutline(hMemDC, newShape.polygon.points, newShape.polygon.drawColor);
-
-                // Add to drawnShapes
                 drawnShapes.push_back(newShape);
 
-                // Reset
-                controlPoints.clear();
-                InvalidateRect(hwnd, NULL, FALSE);
-                drawingMode = MODE_NONE;
+                // Draw the final polygon to the backing buffer
+                DrawFilledPolygon(hMemDC, newShape.polygon.vertices, newShape.polygon.drawcolor, newShape.polygon.fillType,newShape.polygon.fill);
+
+                currentPolygonVertices.clear(); // Clear for the next polygon
+                isPolygonStarted = false;
+                drawingMode = MODE_NONE; // Return to no drawing mode
                 SetCursor(hCursorArrow);
-                std::wcout << L"Polygon drawn and filled." << std::endl;
+
+                InvalidateRect(hwnd, NULL, FALSE); // Trigger blit
+                std::wcout << L"Polygon finished and drawn." << std::endl;
             }
             else {
-                MessageBox(hwnd, L"Polygon requires at least 3 points.", L"Warning", MB_OK | MB_ICONWARNING);
-                controlPoints.clear();
-                RedrawAllShapesToBitmap(hMemDC);
-                InvalidateRect(hwnd, NULL, FALSE);
+                MessageBox(hwnd, L"Polygon must have at least 3 vertices to be drawn. Drawing cancelled.", L"Warning", MB_OK | MB_ICONWARNING);
+                currentPolygonVertices.clear();
+                isPolygonStarted = false;
                 drawingMode = MODE_NONE;
                 SetCursor(hCursorArrow);
+                RedrawAllShapesToBitmap(hMemDC); // Clear temporary lines
+                InvalidateRect(hwnd, NULL, FALSE);
             }
-            return 0; // Important: Return 0 to indicate we handled the message
+            return 0; // Handled the right-click for polygon
         }
         break; // Only break if we didn't handle the message
 
@@ -1492,24 +1661,20 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             }
         }
         else if (drawingMode == MODE_DRAW_POLYGON) {
-            // Draw control points directly to screen for preview
-            for (const auto& p : controlPoints) {
-                SetPixelSafe(hdc, p.x, p.y, RGB(0, 0, 255)); // Blue for polygon control points
-                DrawDirectCircle(hdc, p.x, p.y, 2, RGB(0, 0, 255));
+            // Draw all existing polygon vertices
+            for (const auto& p : currentPolygonVertices) {
+                SetPixelSafe(hdc, p.x, p.y, RGB(255, 0, 255)); // Magenta for polygon vertices
+                DrawDirectCircle(hdc, p.x, p.y, 2, RGB(255, 0, 255)); // Small circle at point
             }
-            // Draw preview polygon outline
-            if (controlPoints.size() >= 2) {
-                DrawPolygonOutline(hdc, controlPoints, drawColor);
-                // Also draw a line from the last point to the current mouse position
-                if (isDrawing) { // only if mouse is pressed
-                    POINT currentMousePos;
-                    GetCursorPos(&currentMousePos);
-                    ScreenToClient(hwnd, &currentMousePos);
-                    DrawLine(hdc, controlPoints.back().x, controlPoints.back().y, currentMousePos.x, currentMousePos.y, drawColor);
-                }
+            // Draw lines between existing vertices
+            for (size_t i = 0; i + 1 < currentPolygonVertices.size(); ++i) {
+                DrawLine(hdc, currentPolygonVertices[i].x, currentPolygonVertices[i].y, currentPolygonVertices[i + 1].x, currentPolygonVertices[i + 1].y, drawColor);
+            }
+            // Draw a temporary line from the last point to the current mouse position (if drawing is active)
+            if (isDrawing && !currentPolygonVertices.empty()) {
+                DrawLine(hdc, currentPolygonVertices.back().x, currentPolygonVertices.back().y, endPoint.x, endPoint.y, drawColor);
             }
         }
-
         EndPaint(hwnd, &ps);
         break;
 
