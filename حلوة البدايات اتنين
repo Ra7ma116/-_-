@@ -268,6 +268,9 @@ RECT clientRect;
 HDC hMemDC = NULL;
 HBITMAP hBitmap = NULL;
 HBITMAP hOldBitmap = NULL;
+HCURSOR currentCursor; 
+
+
 
 COLORREF drawColor = RGB(0, 0, 0);
 COLORREF fillColor = RGB(255, 0, 0);
@@ -1396,7 +1399,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         hCursorWait = LoadCursor(NULL, IDC_WAIT);
         hCursorCross = LoadCursor(NULL, IDC_CROSS);
         hCursorHelp = LoadCursor(NULL, IDC_HELP);
-        SetCursor(hCursorArrow); // Default cursor
+        currentCursor = hCursorArrow; // Default cursor
 
         CreateMainMenu(hwnd); // Create the main menu
         AllocConsole(); // Allocate a new console
@@ -1544,37 +1547,37 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         }
 
                  // Shapes Menu - Lines
-        case 3001: drawingMode = MODE_DRAW_LINE; lineAlgorithm = LINE_ALGO_BRESENHAM; SetCursor(hCursorCross); std::wcout << L"Mode: Draw Line (Bresenham)" << std::endl; break;
-        case 3002: drawingMode = MODE_DRAW_LINE; lineAlgorithm = LINE_ALGO_DDA; SetCursor(hCursorCross); std::wcout << L"Mode: Draw Line (DDA)" << std::endl; break;
-        case 3003: drawingMode = MODE_DRAW_LINE; lineAlgorithm = LINE_ALGO_MIDPOINT; SetCursor(hCursorCross); std::wcout << L"Mode: Draw Line (Midpoint)" << std::endl; break;
-        case 3004: drawingMode = MODE_DRAW_LINE; lineAlgorithm = LINE_ALGO_PARAMETRIC; SetCursor(hCursorCross); std::wcout << L"Mode: Draw Line (Parametric)" << std::endl; break;
+        case 3001: drawingMode = MODE_DRAW_LINE; lineAlgorithm = LINE_ALGO_BRESENHAM;currentCursor = hCursorCross; SetCursor(currentCursor); std::wcout << L"Mode: Draw Line (Bresenham)" << std::endl; break;
+        case 3002: drawingMode = MODE_DRAW_LINE; lineAlgorithm = LINE_ALGO_DDA; currentCursor = hCursorCross; SetCursor(currentCursor); std::wcout << L"Mode: Draw Line (DDA)" << std::endl; break;
+        case 3003: drawingMode = MODE_DRAW_LINE; lineAlgorithm = LINE_ALGO_MIDPOINT;currentCursor = hCursorCross; SetCursor(currentCursor); std::wcout << L"Mode: Draw Line (Midpoint)" << std::endl; break;
+        case 3004: drawingMode = MODE_DRAW_LINE; lineAlgorithm = LINE_ALGO_PARAMETRIC; currentCursor = hCursorCross; SetCursor(currentCursor); std::wcout << L"Mode: Draw Line (Parametric)" << std::endl; break;
 
             // Shapes Menu - Circles
-        case 4001: drawingMode = MODE_DRAW_CIRCLE; circleAlgorithm = CIRCLE_ALGO_DIRECT; SetCursor(hCursorCross); std::wcout << L"Mode: Draw Circle (Direct)" << std::endl; break;
-        case 4002: drawingMode = MODE_DRAW_CIRCLE; circleAlgorithm = CIRCLE_ALGO_POLAR; SetCursor(hCursorCross); std::wcout << L"Mode: Draw Circle (Polar)" << std::endl; break;
-        case 4003: drawingMode = MODE_DRAW_CIRCLE; circleAlgorithm = CIRCLE_ALGO_ITERATIVE_POLAR; SetCursor(hCursorCross); std::wcout << L"Mode: Draw Circle (Iterative Polar)" << std::endl; break;
-        case 4004: drawingMode = MODE_DRAW_CIRCLE; circleAlgorithm = CIRCLE_ALGO_MIDPOINT; SetCursor(hCursorCross); std::wcout << L"Mode: Draw Circle (Midpoint)" << std::endl; break;
-        case 4005: drawingMode = MODE_DRAW_CIRCLE; circleAlgorithm = CIRCLE_ALGO_MODIFIED_MIDPOINT; SetCursor(hCursorCross); std::wcout << L"Mode: Draw Circle (Modified Midpoint)" << std::endl; break;
+        case 4001: drawingMode = MODE_DRAW_CIRCLE; circleAlgorithm = CIRCLE_ALGO_DIRECT; currentCursor = hCursorCross; SetCursor(currentCursor); std::wcout << L"Mode: Draw Circle (Direct)" << std::endl; break;
+        case 4002: drawingMode = MODE_DRAW_CIRCLE; circleAlgorithm = CIRCLE_ALGO_POLAR;currentCursor = hCursorCross; SetCursor(currentCursor); std::wcout << L"Mode: Draw Circle (Polar)" << std::endl; break;
+        case 4003: drawingMode = MODE_DRAW_CIRCLE; circleAlgorithm = CIRCLE_ALGO_ITERATIVE_POLAR; currentCursor = hCursorCross; SetCursor(currentCursor);std::wcout << L"Mode: Draw Circle (Iterative Polar)" << std::endl; break;
+        case 4004: drawingMode = MODE_DRAW_CIRCLE; circleAlgorithm = CIRCLE_ALGO_MIDPOINT; currentCursor = hCursorCross; SetCursor(currentCursor);std::wcout << L"Mode: Draw Circle (Midpoint)" << std::endl; break;
+        case 4005: drawingMode = MODE_DRAW_CIRCLE; circleAlgorithm = CIRCLE_ALGO_MODIFIED_MIDPOINT;currentCursor = hCursorCross; SetCursor(currentCursor); std::wcout << L"Mode: Draw Circle (Modified Midpoint)" << std::endl; break;
 
             // Shapes Menu - Ellipses
-        case 5001: drawingMode = MODE_DRAW_ELLIPSE; ellipseAlgorithm = ELLIPSE_ALGO_DIRECT; SetCursor(hCursorCross); std::wcout << L"Mode: Draw Ellipse (Direct)" << std::endl; break;
-        case 5002: drawingMode = MODE_DRAW_ELLIPSE; ellipseAlgorithm = ELLIPSE_ALGO_POLAR; SetCursor(hCursorCross); std::wcout << L"Mode: Draw Ellipse (Polar)" << std::endl; break;
-        case 5003: drawingMode = MODE_DRAW_ELLIPSE; ellipseAlgorithm = ELLIPSE_ALGO_MIDPOINT; SetCursor(hCursorCross); std::wcout << L"Mode: Draw Ellipse (Midpoint)" << std::endl; break;
+        case 5001: drawingMode = MODE_DRAW_ELLIPSE; ellipseAlgorithm = ELLIPSE_ALGO_DIRECT;currentCursor = hCursorCross; SetCursor(currentCursor); std::wcout << L"Mode: Draw Ellipse (Direct)" << std::endl; break;
+        case 5002: drawingMode = MODE_DRAW_ELLIPSE; ellipseAlgorithm = ELLIPSE_ALGO_POLAR; currentCursor = hCursorCross; SetCursor(currentCursor);std::wcout << L"Mode: Draw Ellipse (Polar)" << std::endl; break;
+        case 5003: drawingMode = MODE_DRAW_ELLIPSE; ellipseAlgorithm = ELLIPSE_ALGO_MIDPOINT; currentCursor = hCursorCross; SetCursor(currentCursor); std::wcout << L"Mode: Draw Ellipse (Midpoint)" << std::endl; break;
 
             // Shapes Menu - Flood Fill
-        case 6001: drawingMode = MODE_FLOOD_FILL; fillAlgorithm = FILL_ALGO_RECURSIVE; SetCursor(hCursorCross); std::wcout << L"Mode: Flood Fill (Recursive)" << std::endl; break;
-        case 6002: drawingMode = MODE_FLOOD_FILL; fillAlgorithm = FILL_ALGO_NON_RECURSIVE; SetCursor(hCursorCross); std::wcout << L"Mode: Flood Fill (Non-Recursive)" << std::endl; break;
+        case 6001: drawingMode = MODE_FLOOD_FILL; fillAlgorithm = FILL_ALGO_RECURSIVE; currentCursor = hCursorCross; SetCursor(currentCursor); std::wcout << L"Mode: Flood Fill (Recursive)" << std::endl; break;
+        case 6002: drawingMode = MODE_FLOOD_FILL; fillAlgorithm = FILL_ALGO_NON_RECURSIVE; currentCursor = hCursorCross; SetCursor(currentCursor);std::wcout << L"Mode: Flood Fill (Non-Recursive)" << std::endl; break;
 
         case 6003: // Re-purposed to be specific algorithm for filled circles
             drawingMode = MODE_FILL_CIRCLE; // Set generic filled circle mode
             filledCircleAlgorithm = FILL_CIRCLE_LINES; // Set specific algorithm
-            SetCursor(hCursorCross);
+            currentCursor = hCursorCross; SetCursor(currentCursor);
             std::wcout << L"Mode: Fill Circle with Lines" << std::endl;
             break;
         case 6004: // Re-purposed to be specific algorithm for filled circles
             drawingMode = MODE_FILL_CIRCLE; // Set generic filled circle mode
             filledCircleAlgorithm = FILL_CIRCLE_CIRCLES; // Set specific algorithm
-            SetCursor(hCursorCross);
+            currentCursor = hCursorCross; SetCursor(currentCursor);
             std::wcout << L"Mode: Fill Circle with Circles)" << std::endl;
             break;
         case 6006: // Hermite Square Fill
@@ -1606,19 +1609,19 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         case 6005: // Hermite Square Fill
             drawingMode = MODE_FILL_SQUARE_HERMIT;
             controlPoints.clear(); // Will need 2 points for a square (start and end of diagonal)
-            SetCursor(hCursorCross);
+            currentCursor = hCursorCross; SetCursor(currentCursor);
             std::wcout << L"Mode: Hermite Square Fill (Click twice then drag)" << std::endl;
             break;
 
             // Shapes Menu - Curves
-        case 7001: drawingMode = MODE_CARDINAL_SPLINE; controlPoints.clear(); SetCursor(hCursorCross); std::wcout << L"Mode: Cardinal Spline (Click for points, Right-click to finish)" << std::endl; break;
+        case 7001: drawingMode = MODE_CARDINAL_SPLINE; controlPoints.clear(); currentCursor = hCursorCross; SetCursor(currentCursor); std::wcout << L"Mode: Cardinal Spline (Click for points, Right-click to finish)" << std::endl; break;
 
             // Shapes Menu - Polygons
         case 7101:
             drawingMode = MODE_DRAW_POLYGON;
             isPolygonStarted = false; // Reset for a new polygon
             currentPolygonVertices.clear(); // Clear any previous temporary vertices
-            SetCursor(hCursorCross);
+            currentCursor = hCursorCross; SetCursor(currentCursor);
             std::wcout << L"Mode: Draw Polygon (Click for points, Right-click to finish)" << std::endl;
             break;
         case 7102:
@@ -1640,20 +1643,28 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             RedrawAllShapesToBitmap(hMemDC); // Clear bitmap to BG color
             InvalidateRect(hwnd, NULL, FALSE);
             drawingMode = MODE_NONE;
-            SetCursor(hCursorArrow);
+            currentCursor = hCursorCross; SetCursor(currentCursor);
             std::wcout << L"Screen cleared." << std::endl;
             break;
 
-            // Options Menu - Mouse Cursors
-        case 9001: SetCursor(hCursorArrow); std::wcout << L"Cursor: Arrow" << std::endl; break;
-        case 9002: SetCursor(hCursorHand); std::wcout << L"Cursor: Hand" << std::endl; break;
-        case 9003: SetCursor(hCursorWait); std::wcout << L"Cursor: Wait" << std::endl; break;
-        case 9004: SetCursor(hCursorCross); std::wcout << L"Cursor: Cross" << std::endl; break;
-        case 9005: SetCursor(hCursorHelp); std::wcout << L"Cursor: Help" << std::endl; break;
+          
+    // Options Menu - Mouse Cursors
+         case 9001: currentCursor = hCursorArrow; PostMessage(hwnd, WM_SETCURSOR, 0, 0); break;
+         case 9002: currentCursor = hCursorHand; PostMessage(hwnd, WM_SETCURSOR, 0, 0); break;
+         case 9003: currentCursor = hCursorWait; PostMessage(hwnd, WM_SETCURSOR, 0, 0); break;
+         case 9004: currentCursor = hCursorCross; PostMessage(hwnd, WM_SETCURSOR, 0, 0); break;
+         case 9005: currentCursor = hCursorHelp; PostMessage(hwnd, WM_SETCURSOR, 0, 0); break;
+
 
         default:
             break;
         }
+    }
+    break;
+   case WM_SETCURSOR:
+    if (LOWORD(lParam) == HTCLIENT) {
+        SetCursor(currentCursor);
+        return TRUE;
     }
     break;
 
@@ -1985,6 +1996,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 SetCursor(hCursorArrow);
                 RedrawAllShapesToBitmap(hMemDC); // Clear temporary lines
                 InvalidateRect(hwnd, NULL, FALSE);
+                currentCursor = hCursorArrow;
+                 SetCursor(hCursorArrow);
             }
             return 0; // Handled the right-click for polygon
         }
