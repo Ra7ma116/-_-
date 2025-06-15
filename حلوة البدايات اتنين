@@ -31,7 +31,8 @@ enum DrawingMode {
     MODE_DRAW_POLYGON,
     MODE_FILL_SQUARE_HERMIT,
     MODE_DRAW_GDI_CIRCLE,
-    MODE_FILL_CIRCLE
+    MODE_FILL_CIRCLE,
+    MODE_BEZIER_ANIMATION
 };
 
 enum LineAlgoType {
@@ -2031,7 +2032,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
 
         // Draw current in-progress shape (e.g., while dragging a line) directly onto the window HDC
         // This is for real-time feedback and will be overwritten by the next WM_PAINT or permanent draw.
-        if (isDrawing && drawingMode != MODE_FLOOD_FILL && drawingMode != MODE_CARDINAL_SPLINE && drawingMode != MODE_DRAW_POLYGON) {
+        if (isDrawing && drawingMode != MODE_FLOOD_FILL && drawingMode != MODE_CARDINAL_SPLINE && drawingMode != MODE_DRAW_POLYGON  && drawingMode != MODE_BEZIER_ANIMATION) {
             switch (drawingMode) {
             case MODE_DRAW_LINE:
                 DrawLine(hdc, startPoint.x, startPoint.y, endPoint.x, endPoint.y, drawColor);
@@ -2074,6 +2075,36 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             if (isDrawing && !currentPolygonVertices.empty()) {
                 DrawLine(hdc, currentPolygonVertices.back().x, currentPolygonVertices.back().y, endPoint.x, endPoint.y, drawColor);
             }
+        }
+        else if (drawingMode == MODE_BEZIER_ANIMATION) {
+                // Draw rectangle frame
+                HPEN hPenRect = CreatePen(PS_SOLID, 3, drawColor);
+                HPEN oldPenRect = (HPEN)SelectObject(hdc, hPenRect);
+                HBRUSH hBrushNull = (HBRUSH)GetStockObject(NULL_BRUSH);
+                HBRUSH oldBrush = (HBRUSH)SelectObject(hdc, hBrushNull);
+
+                Rectangle(hdc, bezierRect.left, bezierRect.top, bezierRect.right, bezierRect.bottom);
+
+                SelectObject(hdc, oldPenRect);
+                SelectObject(hdc, oldBrush);
+                DeleteObject(hPenRect);
+
+                // Draw animated curves
+                int rectHeight = bezierRect.bottom - bezierRect.top;
+                int spacing = rectHeight / (NUM_CURVES + 1);
+
+                for (int i = 0; i < NUM_CURVES; ++i) {
+                        int y = bezierRect.top + (i + 1) * spacing;
+
+                        POINT P0 = {bezierRect.left, y};
+                        POINT P1 = {bezierRect.left + (bezierRect.right - bezierRect.left) / 3, 
+                                    y + ((i % 2 == 0) ? -40 : 40)};
+                        POINT P2 = {bezierRect.left + 2 * (bezierRect.right - bezierRect.left) / 3, 
+                                    y + ((i % 2 == 0) ? 40 : -40)};
+                        POINT P3 = {bezierRect.right, y};
+
+                        DrawBezierStep(hdc, P0, P1, P2, P3, currentStep, curveColors[i]);
+                }
         }
         
         EndPaint(hwnd, &ps);
