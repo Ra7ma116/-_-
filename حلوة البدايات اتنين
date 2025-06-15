@@ -1,5 +1,9 @@
 #define _USE_MATH_DEFINES
 #define _CRT_SECURE_NO_WARNINGS
+#define NUM_CURVES 5
+#define NUM_STEPS 100
+#define TIMER_ID 1
+#define TIMER_INTERVAL 40
 
 #include <windows.h>
 #include <vector>
@@ -293,6 +297,17 @@ std::vector<DrawnShape> drawnShapes;
 std::vector<POINT> currentPolygonVertices; // Stores vertices for the polygon being drawn
 bool isPolygonStarted = false;
 int selectedFillQuarter = 0;
+
+RECT bezierRect = {100, 100, 700, 500};
+COLORREF curveColors[NUM_CURVES] = {
+    RGB(255, 0, 0),    // Red
+    RGB(0, 128, 0),    // Green
+    RGB(0, 0, 255),    // Blue
+    RGB(255, 165, 0),  // Orange
+    RGB(128, 0, 128)   // Purple
+};
+int currentStep = 0;
+bool isAnimating = false;
 
 // =============================================
 // Utility Functions
@@ -719,6 +734,35 @@ void DrawCardinalSpline(HDC targetDC, const std::vector<POINT>& points, double t
             prev_p = currentP;
         }
     }
+}
+
+
+// ----------------- Bezier drawing Algorithm -----------------
+
+void DrawBezierStep(HDC hdc, POINT P0, POINT P1, POINT P2, POINT P3, int stepsToDraw, COLORREF color) {
+    HPEN hPen = CreatePen(PS_SOLID, 2, color);
+    HPEN oldPen = (HPEN)SelectObject(hdc, hPen);
+
+    MoveToEx(hdc, P0.x, P0.y, NULL);
+    for (int step = 1; step <= stepsToDraw; ++step) {
+        double t = (double)step / NUM_STEPS;
+        double invT = 1.0 - t;
+
+        double x = invT * invT * invT * P0.x
+                 + 3 * invT * invT * t * P1.x
+                 + 3 * invT * t * t * P2.x
+                 + t * t * t * P3.x;
+
+        double y = invT * invT * invT * P0.y
+                 + 3 * invT * invT * t * P1.y
+                 + 3 * invT * t * t * P2.y
+                 + t * t * t * P3.y;
+
+        LineTo(hdc, (int)x, (int)y);
+    }
+
+    SelectObject(hdc, oldPen);
+    DeleteObject(hPen);
 }
 
 // ----------------- Polygon Algorithms -----------------
@@ -1342,6 +1386,7 @@ void CreateMainMenu(HWND hwnd)
 
     AppendMenu(hShapesMenu, MF_POPUP, (UINT_PTR)hCurveMenu, L"&Curves");
     AppendMenu(hCurveMenu, MF_STRING, 7001, L"&Cardinal Spline (4+ points, right click to finish)");
+    AppendMenu(hCurveMenu, MF_STRING, 7002, L"&Bezier Animation");
 
     // Polygons Menu (New)
     AppendMenu(hShapesMenu, MF_POPUP, (UINT_PTR)hSubMenuPolygons, L"&Polygons");
@@ -1594,6 +1639,13 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
 
             // Shapes Menu - Curves
         case 7001: drawingMode = MODE_CARDINAL_SPLINE; controlPoints.clear(); SetCursor(currentCursor); std::wcout << L"Mode: Cardinal Spline (Click for points, Right-click to finish)" << std::endl; break;
+        case 7002:  // Bezier Animation
+            drawingMode = MODE_BEZIER_ANIMATION;
+            currentStep = 0;
+            isAnimating = true;
+            SetTimer(hwnd, TIMER_ID, TIMER_INTERVAL, NULL);
+            std::wcout << L"Mode: Bezier Curve Animation" << std::endl;
+            break;
 
             // Shapes Menu - Polygons
         case 7101:
@@ -1646,7 +1698,16 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             return TRUE;
         }
         break;
-
+    case WM_TIMER:
+        if (isAnimating && currentStep < NUM_STEPS) {
+             currentStep++;
+             InvalidateRect(hwnd, NULL, TRUE);
+        }
+        else if (currentStep >= NUM_STEPS) {
+             KillTimer(hwnd, TIMER_ID);
+             isAnimating = false;
+        }
+        return 0;
     case WM_LBUTTONDOWN:
         startPoint.x = LOWORD(lParam);
         startPoint.y = HIWORD(lParam);
@@ -2014,6 +2075,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 DrawLine(hdc, currentPolygonVertices.back().x, currentPolygonVertices.back().y, endPoint.x, endPoint.y, drawColor);
             }
         }
+        
         EndPaint(hwnd, &ps);
         break;
 
@@ -2031,6 +2093,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         if (hBitmap) {
             DeleteObject(hBitmap); // Delete the bitmap
         }
+        KillTimer(hwnd, TIMER_ID);
         FreeConsole(); // Free the console
         PostQuitMessage(0);
         break;
