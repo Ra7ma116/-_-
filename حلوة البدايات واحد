@@ -345,7 +345,7 @@ std::vector<POINT> currentPolygonVertices; // Stores vertices for the polygon be
 bool isPolygonStarted = false;
 int selectedFillQuarter = 0;
 
-RECT bezierRect = {100, 100, 700, 500};
+RECT bezierRect = { 100, 100, 700, 500 };
 COLORREF curveColors[NUM_CURVES] = {
     RGB(255, 0, 0),    // Red
     RGB(0, 128, 0),    // Green
@@ -796,14 +796,14 @@ void DrawBezierStep(HDC hdc, POINT P0, POINT P1, POINT P2, POINT P3, int stepsTo
         double invT = 1.0 - t;
 
         double x = invT * invT * invT * P0.x
-                 + 3 * invT * invT * t * P1.x
-                 + 3 * invT * t * t * P2.x
-                 + t * t * t * P3.x;
+            + 3 * invT * invT * t * P1.x
+            + 3 * invT * t * t * P2.x
+            + t * t * t * P3.x;
 
         double y = invT * invT * invT * P0.y
-                 + 3 * invT * invT * t * P1.y
-                 + 3 * invT * t * t * P2.y
-                 + t * t * t * P3.y;
+            + 3 * invT * invT * t * P1.y
+            + 3 * invT * t * t * P2.y
+            + t * t * t * P3.y;
 
         LineTo(hdc, (int)x, (int)y);
     }
@@ -1117,7 +1117,7 @@ struct outCode {
 };
 
 outCode GetOutCode(double x, double y, double left, double right, double ybottom, double ytop) {
-    outCode out = {0};
+    outCode out = { 0 };
     if (x < left) out.left = 1;
     else if (x > right) out.right = 1;
     if (y < ybottom) out.bottom = 1;
@@ -1150,9 +1150,11 @@ void ClipLine(HDC hdc, POINT p1, POINT p2, COLORREF color) {
             MoveToEx(hdc, p1.x, p1.y, NULL);
             LineTo(hdc, p2.x, p2.y);
             return;
-        } else if ((*(int*)&out1 & *(int*)&out2) != 0) {
+        }
+        else if ((*(int*)&out1 & *(int*)&out2) != 0) {
             return;
-        } else {
+        }
+        else {
             outCode out = (*(int*)&out1) ? out1 : out2;
             POINT newPoint;
             if (out.left) newPoint = VIntersect(left, p1, p2);
@@ -1163,7 +1165,8 @@ void ClipLine(HDC hdc, POINT p1, POINT p2, COLORREF color) {
             if (*(int*)&out == *(int*)&out1) {
                 p1 = newPoint;
                 out1 = GetOutCode(p1.x, p1.y, left, right, ybottom, ytop);
-            } else {
+            }
+            else {
                 p2 = newPoint;
                 out2 = GetOutCode(p2.x, p2.y, left, right, ybottom, ytop);
             }
@@ -1186,52 +1189,28 @@ void ClipPolygon(HDC targetDC, const std::vector<POINT>& polygon, COLORREF color
 
             bool pInside = false, sInside = false;
             switch (edge) {
-                case 0: // Left edge
-                    pInside = p.x >= clippingRect.left;
-                    sInside = s.x >= clippingRect.left;
-                    break;
-                case 1: // Right edge
-                    pInside = p.x <= clippingRect.right;
-                    sInside = s.x <= clippingRect.right;
-                    break;
-                case 2: // Top edge
-                    pInside = p.y >= clippingRect.top;
-                    sInside = s.y >= clippingRect.top;
-                    break;
-                case 3: // Bottom edge
-                    pInside = p.y <= clippingRect.bottom;
-                    sInside = s.y <= clippingRect.bottom;
-                    break;
+            case 0: // Left edge
+                pInside = p.x >= clippingRect.left;
+                sInside = s.x >= clippingRect.left;
+                break;
+            case 1: // Right edge
+                pInside = p.x <= clippingRect.right;
+                sInside = s.x <= clippingRect.right;
+                break;
+            case 2: // Top edge
+                pInside = p.y >= clippingRect.top;
+                sInside = s.y >= clippingRect.top;
+                break;
+            case 3: // Bottom edge
+                pInside = p.y <= clippingRect.bottom;
+                sInside = s.y <= clippingRect.bottom;
+                break;
             }
 
             if (pInside) {
                 if (!sInside) {
                     POINT intersect;
                     switch (edge) {
-                        case 0: // Left
-                            intersect.x = clippingRect.left;
-                            intersect.y = s.y + (p.y - s.y) * (clippingRect.left - s.x) / (p.x - s.x);
-                            break;
-                        case 1: // Right
-                            intersect.x = clippingRect.right;
-                            intersect.y = s.y + (p.y - s.y) * (clippingRect.right - s.x) / (p.x - s.x);
-                            break;
-                        case 2: // Top
-                            intersect.y = clippingRect.top;
-                            intersect.x = s.x + (p.x - s.x) * (clippingRect.top - s.y) / (p.y - s.y);
-                            break;
-                        case 3: // Bottom
-                            intersect.y = clippingRect.bottom;
-                            intersect.x = s.x + (p.x - s.x) * (clippingRect.bottom - s.y) / (p.y - s.y);
-                            break;
-                    }
-                    output.push_back(intersect);
-                }
-                output.push_back(p);
-            }
-            else if (sInside) {
-                POINT intersect;
-                switch (edge) {
                     case 0: // Left
                         intersect.x = clippingRect.left;
                         intersect.y = s.y + (p.y - s.y) * (clippingRect.left - s.x) / (p.x - s.x);
@@ -1248,6 +1227,30 @@ void ClipPolygon(HDC targetDC, const std::vector<POINT>& polygon, COLORREF color
                         intersect.y = clippingRect.bottom;
                         intersect.x = s.x + (p.x - s.x) * (clippingRect.bottom - s.y) / (p.y - s.y);
                         break;
+                    }
+                    output.push_back(intersect);
+                }
+                output.push_back(p);
+            }
+            else if (sInside) {
+                POINT intersect;
+                switch (edge) {
+                case 0: // Left
+                    intersect.x = clippingRect.left;
+                    intersect.y = s.y + (p.y - s.y) * (clippingRect.left - s.x) / (p.x - s.x);
+                    break;
+                case 1: // Right
+                    intersect.x = clippingRect.right;
+                    intersect.y = s.y + (p.y - s.y) * (clippingRect.right - s.x) / (p.x - s.x);
+                    break;
+                case 2: // Top
+                    intersect.y = clippingRect.top;
+                    intersect.x = s.x + (p.x - s.x) * (clippingRect.top - s.y) / (p.y - s.y);
+                    break;
+                case 3: // Bottom
+                    intersect.y = clippingRect.bottom;
+                    intersect.x = s.x + (p.x - s.x) * (clippingRect.bottom - s.y) / (p.y - s.y);
+                    break;
                 }
                 output.push_back(intersect);
             }
@@ -1274,7 +1277,7 @@ void RedrawAllShapesToBitmap(HDC targetDC) {
     FillRect(targetDC, &clientRect, hBackgroundBrush);
     DeleteObject(hBackgroundBrush);
 
-     if (clippingMode != CLIPPING_NONE) {
+    if (clippingMode != CLIPPING_NONE) {
         DrawClippingWindow(targetDC);
     }
 
@@ -1337,21 +1340,21 @@ void RedrawAllShapesToBitmap(HDC targetDC) {
             break;
         case SHAPE_CLIPPED:
             switch (shape.clipped.type) {
-                case CLIP_POINT:
-                    for (const auto& p : shape.clipped.points) {
-                        ClipPoint(targetDC, p, shape.clipped.color);
-                    }
-                    break;
-                case CLIP_LINE:
-                    for (size_t i = 0; i + 1 < shape.clipped.points.size(); i += 2) {
-                        ClipLine(targetDC, shape.clipped.points[i], shape.clipped.points[i+1], shape.clipped.color);
-                    }
-                    break;
-                case CLIP_POLYGON:
-                    if (shape.clipped.points.size() >= 3) {
-                        ClipPolygon(targetDC, shape.clipped.points, shape.clipped.color);
-                    }
-                    break;
+            case CLIP_POINT:
+                for (const auto& p : shape.clipped.points) {
+                    ClipPoint(targetDC, p, shape.clipped.color);
+                }
+                break;
+            case CLIP_LINE:
+                for (size_t i = 0; i + 1 < shape.clipped.points.size(); i += 2) {
+                    ClipLine(targetDC, shape.clipped.points[i], shape.clipped.points[i + 1], shape.clipped.color);
+                }
+                break;
+            case CLIP_POLYGON:
+                if (shape.clipped.points.size() >= 3) {
+                    ClipPolygon(targetDC, shape.clipped.points, shape.clipped.color);
+                }
+                break;
             }
             break;
 
@@ -1360,21 +1363,21 @@ void RedrawAllShapesToBitmap(HDC targetDC) {
     if (clippingMode != CLIPPING_NONE && !clippingPoints.empty()) {
         DrawClippingWindow(targetDC);
         switch (clippingShapeType) {
-            case CLIP_POINT:
-                for (const auto& p : clippingPoints) {
-                    ClipPoint(targetDC, p, drawColor);
-                }
-                break;
-            case CLIP_LINE:
-                for (size_t i = 0; i + 1 < clippingPoints.size(); i += 2) {
-                    ClipLine(targetDC, clippingPoints[i], clippingPoints[i+1], drawColor);
-                }
-                break;
-            case CLIP_POLYGON:
-                if (clippingPoints.size() >= 3) {
-                    ClipPolygon(targetDC, clippingPoints, drawColor);
-                }
-                break;
+        case CLIP_POINT:
+            for (const auto& p : clippingPoints) {
+                ClipPoint(targetDC, p, drawColor);
+            }
+            break;
+        case CLIP_LINE:
+            for (size_t i = 0; i + 1 < clippingPoints.size(); i += 2) {
+                ClipLine(targetDC, clippingPoints[i], clippingPoints[i + 1], drawColor);
+            }
+            break;
+        case CLIP_POLYGON:
+            if (clippingPoints.size() >= 3) {
+                ClipPolygon(targetDC, clippingPoints, drawColor);
+            }
+            break;
         }
         for (const auto& p : clippingPoints) {
             SetPixelSafe(targetDC, p.x, p.y, RGB(255, 0, 0));
@@ -1399,7 +1402,7 @@ void SaveToFile(HWND hwnd) {
     ofn.Flags = OFN_OVERWRITEPROMPT;
 
     if (GetSaveFileNameW(&ofn)) {
-            std::ofstream out(fileName, std::ios::binary);
+        std::ofstream out(fileName, std::ios::binary);
 
 
 
@@ -1435,13 +1438,13 @@ void SaveToFile(HWND hwnd) {
             case SHAPE_FILL_CIRCLE: out.write(reinterpret_cast<const char*>(&shape.fillCircleData), sizeof(FillCircleShape)); break;
             case SHAPE_FILL_SQUARE_HERMIT: out.write(reinterpret_cast<const char*>(&shape.fillSquareHermit), sizeof(FillSquareHermitShape)); break;
             case SHAPE_CLIPPED: {
-                    size_t numPoints = shape.clipped.points.size();
-                    out.write(reinterpret_cast<const char*>(&shape.clipped.type), sizeof(shape.clipped.type));
-                    out.write(reinterpret_cast<const char*>(&shape.clipped.color), sizeof(shape.clipped.color));
-                    out.write(reinterpret_cast<const char*>(&numPoints), sizeof(numPoints));
-                    out.write(reinterpret_cast<const char*>(shape.clipped.points.data()), numPoints * sizeof(POINT));
-                    break;
-                }
+                size_t numPoints = shape.clipped.points.size();
+                out.write(reinterpret_cast<const char*>(&shape.clipped.type), sizeof(shape.clipped.type));
+                out.write(reinterpret_cast<const char*>(&shape.clipped.color), sizeof(shape.clipped.color));
+                out.write(reinterpret_cast<const char*>(&numPoints), sizeof(numPoints));
+                out.write(reinterpret_cast<const char*>(shape.clipped.points.data()), numPoints * sizeof(POINT));
+                break;
+            }
             }
         }
         out.write(reinterpret_cast<const char*>(&bgColor), sizeof(bgColor));
@@ -1464,7 +1467,7 @@ void LoadFromFile(HWND hwnd) {
     ofn.Flags = OFN_FILEMUSTEXIST;
 
     if (GetOpenFileNameW(&ofn)) {
-            std::ifstream in(fileName, std::ios::binary);
+        std::ifstream in(fileName, std::ios::binary);
 
 
         if (!in) return;
@@ -1523,15 +1526,15 @@ void LoadFromFile(HWND hwnd) {
                 in.read(reinterpret_cast<char*>(&shape.fillSquareHermit), sizeof(FillSquareHermitShape));
                 break;
             }
-             case SHAPE_CLIPPED: {
-                    size_t numPoints;
-                    in.read(reinterpret_cast<char*>(&shape.clipped.type), sizeof(shape.clipped.type));
-                    in.read(reinterpret_cast<char*>(&shape.clipped.color), sizeof(shape.clipped.color));
-                    in.read(reinterpret_cast<char*>(&numPoints), sizeof(numPoints));
-                    shape.clipped.points.resize(numPoints);
-                    in.read(reinterpret_cast<char*>(shape.clipped.points.data()), numPoints * sizeof(POINT));
-                    break;
-                }
+            case SHAPE_CLIPPED: {
+                size_t numPoints;
+                in.read(reinterpret_cast<char*>(&shape.clipped.type), sizeof(shape.clipped.type));
+                in.read(reinterpret_cast<char*>(&shape.clipped.color), sizeof(shape.clipped.color));
+                in.read(reinterpret_cast<char*>(&numPoints), sizeof(numPoints));
+                shape.clipped.points.resize(numPoints);
+                in.read(reinterpret_cast<char*>(shape.clipped.points.data()), numPoints * sizeof(POINT));
+                break;
+            }
 
             }
 
@@ -1688,11 +1691,11 @@ void CreateMainMenu(HWND hwnd)
     AppendMenu(hSubMenuPolygons, MF_STRING, 7102, L"Set Fill: &Convex");
     AppendMenu(hSubMenuPolygons, MF_STRING, 7103, L"Set Fill: &Non-Convex");
 
-     // Clipping Menu
+    // Clipping Menu
     AppendMenu(hMenu, MF_POPUP, (UINT_PTR)hClippingMenu, L"&Clipping");
-    AppendMenu(hClippingMenu, MF_STRING, 10001, L"&Enable Rectangle Clipping");
-    AppendMenu(hClippingMenu, MF_STRING, 10002, L"Enable &Square Clipping");
-    AppendMenu(hClippingMenu, MF_STRING, 10003, L"&Disable Clipping");
+    AppendMenu(hClippingMenu, MF_STRING, 11001, L"&Enable Rectangle Clipping");
+    AppendMenu(hClippingMenu, MF_STRING, 11002, L"Enable &Square Clipping");
+    AppendMenu(hClippingMenu, MF_STRING, 11003, L"&Disable Clipping");
     AppendMenu(hClippingMenu, MF_SEPARATOR, 0, NULL);
     AppendMenu(hClippingMenu, MF_POPUP, (UINT_PTR)hClippingShapeMenu, L"Clipping &Shape");
     AppendMenu(hClippingShapeMenu, MF_STRING, 10011, L"Clip &Points");
@@ -1996,8 +1999,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         case 9004: currentCursor = hCursorCross; PostMessage(hwnd, WM_SETCURSOR, 0, 0); break;
         case 9005: currentCursor = hCursorHelp; PostMessage(hwnd, WM_SETCURSOR, 0, 0); break;
 
-        // Clipping Menu
-        case 10001: // Enable Rectangle Clipping
+            // Clipping Menu
+        case 11001: // Enable Rectangle Clipping
             clippingMode = CLIPPING_RECTANGLE;
             RedrawAllShapesToBitmap(hMemDC);
             clippingPoints.clear();
@@ -2005,16 +2008,16 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             std::wcout << L"Rectangle Clipping Enabled" << std::endl;
             InvalidateRect(hwnd, NULL, FALSE);
             break;
-        case 10002: // Enable Square Clipping
+        case 11002: // Enable Square Clipping
             clippingMode = CLIPPING_SQUARE;
             clippingRect.right = clippingRect.left + (clippingRect.bottom - clippingRect.top);
-             RedrawAllShapesToBitmap(hMemDC);
+            RedrawAllShapesToBitmap(hMemDC);
             clippingPoints.clear();
             drawingMode = MODE_NONE;
             std::wcout << L"Square Clipping Enabled" << std::endl;
             InvalidateRect(hwnd, NULL, FALSE);
             break;
-        case 10003: // Disable Clipping
+        case 11003: // Disable Clipping
             clippingMode = CLIPPING_NONE;
             clippingPoints.clear();
             std::wcout << L"Clipping Disabled" << std::endl;
@@ -2058,12 +2061,12 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         break;
     case WM_TIMER:
         if (isAnimating && currentStep < NUM_STEPS) {
-             currentStep++;
-             InvalidateRect(hwnd, NULL, TRUE);
+            currentStep++;
+            InvalidateRect(hwnd, NULL, TRUE);
         }
         else if (currentStep >= NUM_STEPS) {
-             KillTimer(hwnd, TIMER_ID);
-             isAnimating = false;
+            KillTimer(hwnd, TIMER_ID);
+            isAnimating = false;
         }
         return 0;
     case WM_LBUTTONDOWN:
@@ -2072,9 +2075,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
 
             SetPixelSafe(hMemDC, p.x, p.y, RGB(255, 0, 0));
 
-            if(clippingShapeType == CLIP_POINT){
+            if (clippingShapeType == CLIP_POINT) {
                 if (p.x >= clippingRect.left && p.x <= clippingRect.right && p.y >= clippingRect.top && p.y <= clippingRect.bottom) {
-                        clippingPoints.push_back(p);
+                    clippingPoints.push_back(p);
                     SetPixelSafe(hMemDC, p.x, p.y, drawColor);
                 }
                 else {
@@ -2088,124 +2091,124 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
 
             InvalidateRect(hwnd, NULL, FALSE);
 
-        clippingPoints.push_back(p);
+            clippingPoints.push_back(p);
 
 
-        if (clippingShapeType == CLIP_LINE && clippingPoints.size() == 2) {
-            ClipLine(hMemDC, clippingPoints[0], clippingPoints[1], drawColor);
+            if (clippingShapeType == CLIP_LINE && clippingPoints.size() == 2) {
+                ClipLine(hMemDC, clippingPoints[0], clippingPoints[1], drawColor);
 
 
-            InvalidateRect(hwnd, NULL, FALSE);
-        }
+                InvalidateRect(hwnd, NULL, FALSE);
+            }
             RedrawAllShapesToBitmap(hMemDC);
             InvalidateRect(hwnd, NULL, FALSE);
             std::wcout << L"Clipping point added: (" << p.x << L", " << p.y << L")" << std::endl;
         }
         else {
-        startPoint.x = LOWORD(lParam);
-        startPoint.y = HIWORD(lParam);
-        isDrawing = true;
+            startPoint.x = LOWORD(lParam);
+            startPoint.y = HIWORD(lParam);
+            isDrawing = true;
 
-        if (drawingMode == MODE_FLOOD_FILL) {
-            COLORREF targetColor = GetPixel(hMemDC, startPoint.x, startPoint.y); // Get original color of clicked point
+            if (drawingMode == MODE_FLOOD_FILL) {
+                COLORREF targetColor = GetPixel(hMemDC, startPoint.x, startPoint.y); // Get original color of clicked point
 
-            // Important: if targetColor is the same as fillColor, nothing to do.
-            if (targetColor == fillColor) {
-                std::wcout << L"Clicked on an area already filled with the current fill color." << std::endl;
-                return 0; // Or break if inside switch
-            }
-
-            DrawnShape newShape;
-            newShape.type = SHAPE_FILLED_REGION;
-            newShape.filledRegion.seedPoint = startPoint;
-            newShape.filledRegion.fillColor = fillColor;
-            newShape.filledRegion.algo = fillAlgorithm;
-            newShape.filledRegion.targetColor = targetColor; // Store original color for re-draw
-
-            // Directly apply fill to the backing buffer
-            if (fillAlgorithm == FILL_ALGO_RECURSIVE) {
-                FloodFillRecursive(hMemDC, startPoint.x, startPoint.y, fillColor, targetColor);
-            }
-            else { // FILL_ALGO_NON_RECURSIVE
-                FloodFillNRecursive(hMemDC, startPoint.x, startPoint.y, targetColor, fillColor);
-            }
-            drawnShapes.push_back(newShape);
-            InvalidateRect(hwnd, NULL, FALSE); // Invalidate to trigger WM_PAINT and blit
-        }
-        else if (drawingMode == MODE_CARDINAL_SPLINE) {
-            controlPoints.push_back(startPoint);
-            // Redraw to show the placed control point
-            InvalidateRect(hwnd, NULL, FALSE);
-            std::wcout << L"Cardinal Spline Control Point added: (" << startPoint.x << L", " << startPoint.y << L")" << std::endl;
-        }
-        else if (drawingMode == MODE_DRAW_POLYGON) {
-            if (!isPolygonStarted) {
-                currentPolygonVertices.clear(); // Ensure it's clear for a new polygon
-                isPolygonStarted = true;
-            }
-            currentPolygonVertices.push_back(startPoint);
-            // Draw a point for the vertex immediately on screen
-            HDC tempHDC = GetDC(hwnd);
-            SetPixel(tempHDC, startPoint.x, startPoint.y, drawColor);
-            ReleaseDC(hwnd, tempHDC);
-
-            std::wcout << L"Polygon Vertex added: (" << startPoint.x << L", " << startPoint.y << L")" << std::endl;
-            // Invalidate to make sure the temporary line from the previous point (if any) is redrawn.
-            InvalidateRect(hwnd, NULL, FALSE);
-        }
-        // FILL_Circle
-        else if (drawingMode == MODE_FILL_CIRCLE) {
-
-            DrawnShape newShape;
-            newShape.type = SHAPE_FILL_CIRCLE;
-            newShape.fillCircleData.center = startPoint;
-            newShape.fillCircleData.radius = 60;
-            newShape.fillCircleData.quarter = selectedFillQuarter;
-            newShape.fillCircleData.color = fillColor;
-            newShape.fillCircleData.algorithm = filledCircleAlgorithm;
-
-            DrawFilledCircle(hMemDC, newShape.fillCircleData.center.x, newShape.fillCircleData.center.y,
-                newShape.fillCircleData.radius, newShape.fillCircleData.quarter, newShape.fillCircleData.color, newShape.fillCircleData.algorithm);
-
-
-            drawnShapes.push_back(newShape);
-            InvalidateRect(hwnd, NULL, FALSE);
-            isDrawing = false;
-            drawingMode = MODE_NONE;
-            SetCursor(LoadCursor(NULL, IDC_ARROW));
-        }
-        else if (drawingMode == MODE_FILL_SQUARE_HERMIT) {
-            if (controlPoints.size() == 1) { // First click for square
-                RECT square = {
-                    min(controlPoints[0].x, controlPoints[1].x),
-                    min(controlPoints[0].y, controlPoints[1].y),
-                    max(controlPoints[0].x, controlPoints[1].x),
-                    max(controlPoints[0].y, controlPoints[1].y)
-                };
-            }
-            else if (controlPoints.size() == 2) { // Second click for square
-                RECT square = {
-                     min(controlPoints[0].x, controlPoints[1].x),
-                     min(controlPoints[0].y, controlPoints[1].y),
-                     max(controlPoints[0].x, controlPoints[1].x),
-                     max(controlPoints[0].y, controlPoints[1].y)
-                };
+                // Important: if targetColor is the same as fillColor, nothing to do.
+                if (targetColor == fillColor) {
+                    std::wcout << L"Clicked on an area already filled with the current fill color." << std::endl;
+                    return 0; // Or break if inside switch
+                }
 
                 DrawnShape newShape;
-                newShape.type = SHAPE_FILL_SQUARE_HERMIT;
-                newShape.fillSquareHermit.square = square;
-                newShape.fillSquareHermit.color = drawColor;
+                newShape.type = SHAPE_FILLED_REGION;
+                newShape.filledRegion.seedPoint = startPoint;
+                newShape.filledRegion.fillColor = fillColor;
+                newShape.filledRegion.algo = fillAlgorithm;
+                newShape.filledRegion.targetColor = targetColor; // Store original color for re-draw
+
+                // Directly apply fill to the backing buffer
+                if (fillAlgorithm == FILL_ALGO_RECURSIVE) {
+                    FloodFillRecursive(hMemDC, startPoint.x, startPoint.y, fillColor, targetColor);
+                }
+                else { // FILL_ALGO_NON_RECURSIVE
+                    FloodFillNRecursive(hMemDC, startPoint.x, startPoint.y, targetColor, fillColor);
+                }
+                drawnShapes.push_back(newShape);
+                InvalidateRect(hwnd, NULL, FALSE); // Invalidate to trigger WM_PAINT and blit
+            }
+            else if (drawingMode == MODE_CARDINAL_SPLINE) {
+                controlPoints.push_back(startPoint);
+                // Redraw to show the placed control point
+                InvalidateRect(hwnd, NULL, FALSE);
+                std::wcout << L"Cardinal Spline Control Point added: (" << startPoint.x << L", " << startPoint.y << L")" << std::endl;
+            }
+            else if (drawingMode == MODE_DRAW_POLYGON) {
+                if (!isPolygonStarted) {
+                    currentPolygonVertices.clear(); // Ensure it's clear for a new polygon
+                    isPolygonStarted = true;
+                }
+                currentPolygonVertices.push_back(startPoint);
+                // Draw a point for the vertex immediately on screen
+                HDC tempHDC = GetDC(hwnd);
+                SetPixel(tempHDC, startPoint.x, startPoint.y, drawColor);
+                ReleaseDC(hwnd, tempHDC);
+
+                std::wcout << L"Polygon Vertex added: (" << startPoint.x << L", " << startPoint.y << L")" << std::endl;
+                // Invalidate to make sure the temporary line from the previous point (if any) is redrawn.
+                InvalidateRect(hwnd, NULL, FALSE);
+            }
+            // FILL_Circle
+            else if (drawingMode == MODE_FILL_CIRCLE) {
+
+                DrawnShape newShape;
+                newShape.type = SHAPE_FILL_CIRCLE;
+                newShape.fillCircleData.center = startPoint;
+                newShape.fillCircleData.radius = 60;
+                newShape.fillCircleData.quarter = selectedFillQuarter;
+                newShape.fillCircleData.color = fillColor;
+                newShape.fillCircleData.algorithm = filledCircleAlgorithm;
+
+                DrawFilledCircle(hMemDC, newShape.fillCircleData.center.x, newShape.fillCircleData.center.y,
+                    newShape.fillCircleData.radius, newShape.fillCircleData.quarter, newShape.fillCircleData.color, newShape.fillCircleData.algorithm);
+
 
                 drawnShapes.push_back(newShape);
-                RedrawAllShapesToBitmap(hMemDC);
                 InvalidateRect(hwnd, NULL, FALSE);
                 isDrawing = false;
                 drawingMode = MODE_NONE;
-                SetCursor(hCursorArrow);
-                controlPoints.clear();
-
+                SetCursor(LoadCursor(NULL, IDC_ARROW));
             }
-        }
+            else if (drawingMode == MODE_FILL_SQUARE_HERMIT) {
+                if (controlPoints.size() == 1) { // First click for square
+                    RECT square = {
+                        min(controlPoints[0].x, controlPoints[1].x),
+                        min(controlPoints[0].y, controlPoints[1].y),
+                        max(controlPoints[0].x, controlPoints[1].x),
+                        max(controlPoints[0].y, controlPoints[1].y)
+                    };
+                }
+                else if (controlPoints.size() == 2) { // Second click for square
+                    RECT square = {
+                         min(controlPoints[0].x, controlPoints[1].x),
+                         min(controlPoints[0].y, controlPoints[1].y),
+                         max(controlPoints[0].x, controlPoints[1].x),
+                         max(controlPoints[0].y, controlPoints[1].y)
+                    };
+
+                    DrawnShape newShape;
+                    newShape.type = SHAPE_FILL_SQUARE_HERMIT;
+                    newShape.fillSquareHermit.square = square;
+                    newShape.fillSquareHermit.color = drawColor;
+
+                    drawnShapes.push_back(newShape);
+                    RedrawAllShapesToBitmap(hMemDC);
+                    InvalidateRect(hwnd, NULL, FALSE);
+                    isDrawing = false;
+                    drawingMode = MODE_NONE;
+                    SetCursor(hCursorArrow);
+                    controlPoints.clear();
+
+                }
+            }
         }
         break;
 
@@ -2466,14 +2469,14 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         // Blit the content of the off-screen bitmap to the window
         BitBlt(hdc, 0, 0, clientRect.right, clientRect.bottom, hMemDC, 0, 0, SRCCOPY);
         if (clippingMode != CLIPPING_NONE && !clippingPoints.empty()) {
-        for (const auto& p : clippingPoints) {
-                    SetPixelSafe(hMemDC, p.x, p.y, drawColor);
+            for (const auto& p : clippingPoints) {
+                SetPixelSafe(hMemDC, p.x, p.y, drawColor);
 
+            }
         }
-    }
         // Draw current in-progress shape (e.g., while dragging a line) directly onto the window HDC
         // This is for real-time feedback and will be overwritten by the next WM_PAINT or permanent draw.
-        if (isDrawing && drawingMode != MODE_FLOOD_FILL && drawingMode != MODE_CARDINAL_SPLINE && drawingMode != MODE_DRAW_POLYGON  && drawingMode != MODE_BEZIER_ANIMATION && clippingMode == CLIPPING_NONE) {
+        if (isDrawing && drawingMode != MODE_FLOOD_FILL && drawingMode != MODE_CARDINAL_SPLINE && drawingMode != MODE_DRAW_POLYGON && drawingMode != MODE_BEZIER_ANIMATION && clippingMode == CLIPPING_NONE) {
             switch (drawingMode) {
             case MODE_DRAW_LINE:
                 DrawLine(hdc, startPoint.x, startPoint.y, endPoint.x, endPoint.y, drawColor);
@@ -2518,34 +2521,34 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             }
         }
         else if (drawingMode == MODE_BEZIER_ANIMATION) {
-                // Draw rectangle frame
-                HPEN hPenRect = CreatePen(PS_SOLID, 3, drawColor);
-                HPEN oldPenRect = (HPEN)SelectObject(hdc, hPenRect);
-                HBRUSH hBrushNull = (HBRUSH)GetStockObject(NULL_BRUSH);
-                HBRUSH oldBrush = (HBRUSH)SelectObject(hdc, hBrushNull);
+            // Draw rectangle frame
+            HPEN hPenRect = CreatePen(PS_SOLID, 3, drawColor);
+            HPEN oldPenRect = (HPEN)SelectObject(hdc, hPenRect);
+            HBRUSH hBrushNull = (HBRUSH)GetStockObject(NULL_BRUSH);
+            HBRUSH oldBrush = (HBRUSH)SelectObject(hdc, hBrushNull);
 
-                Rectangle(hdc, bezierRect.left, bezierRect.top, bezierRect.right, bezierRect.bottom);
+            Rectangle(hdc, bezierRect.left, bezierRect.top, bezierRect.right, bezierRect.bottom);
 
-                SelectObject(hdc, oldPenRect);
-                SelectObject(hdc, oldBrush);
-                DeleteObject(hPenRect);
+            SelectObject(hdc, oldPenRect);
+            SelectObject(hdc, oldBrush);
+            DeleteObject(hPenRect);
 
-                // Draw animated curves
-                int rectHeight = bezierRect.bottom - bezierRect.top;
-                int spacing = rectHeight / (NUM_CURVES + 1);
+            // Draw animated curves
+            int rectHeight = bezierRect.bottom - bezierRect.top;
+            int spacing = rectHeight / (NUM_CURVES + 1);
 
-                for (int i = 0; i < NUM_CURVES; ++i) {
-                        int y = bezierRect.top + (i + 1) * spacing;
+            for (int i = 0; i < NUM_CURVES; ++i) {
+                int y = bezierRect.top + (i + 1) * spacing;
 
-                        POINT P0 = {bezierRect.left, y};
-                        POINT P1 = {bezierRect.left + (bezierRect.right - bezierRect.left) / 3,
-                                    y + ((i % 2 == 0) ? -40 : 40)};
-                        POINT P2 = {bezierRect.left + 2 * (bezierRect.right - bezierRect.left) / 3,
-                                    y + ((i % 2 == 0) ? 40 : -40)};
-                        POINT P3 = {bezierRect.right, y};
+                POINT P0 = { bezierRect.left, y };
+                POINT P1 = { bezierRect.left + (bezierRect.right - bezierRect.left) / 3,
+                            y + ((i % 2 == 0) ? -40 : 40) };
+                POINT P2 = { bezierRect.left + 2 * (bezierRect.right - bezierRect.left) / 3,
+                            y + ((i % 2 == 0) ? 40 : -40) };
+                POINT P3 = { bezierRect.right, y };
 
-                        DrawBezierStep(hdc, P0, P1, P2, P3, currentStep, curveColors[i]);
-                }
+                DrawBezierStep(hdc, P0, P1, P2, P3, currentStep, curveColors[i]);
+            }
         }
         else if (clippingMode != CLIPPING_NONE) {
             for (const auto& p : clippingPoints) {
