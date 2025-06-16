@@ -2006,6 +2006,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         // Clipping Menu
         case 11001: // Enable Rectangle Clipping
             clippingMode = CLIPPING_RECTANGLE;
+            clippingRect = {200, 200, 600, 450};
             RedrawAllShapesToBitmap(hMemDC);
             clippingPoints.clear();
             drawingMode = MODE_NONE;
