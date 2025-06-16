@@ -2020,6 +2020,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         case 11003: // Disable Clipping
             clippingMode = CLIPPING_NONE;
             clippingPoints.clear();
+            RedrawAllShapesToBitmap(hMemDC);
             std::wcout << L"Clipping Disabled" << std::endl;
             InvalidateRect(hwnd, NULL, FALSE);
             break;
