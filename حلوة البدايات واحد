@@ -1067,7 +1067,7 @@ void FillSquareWithHermit(HDC hdc, RECT square, COLORREF color) {
             int current_x = x_base + x_offset;
 
             // Clamp current_x to ensure it stays within the square's overall bounds
-            current_x = std::max<int>(square.left, std::min<int>(square.right - 1, current_x));
+            current_x = max(square.left, min(square.right - 1, current_x));
             if (first_point) {
                 MoveToEx(hdc, current_x, y, NULL);
                 first_point = false;
