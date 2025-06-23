@@ -1,6 +1,6 @@
 #define _USE_MATH_DEFINES
 #define _CRT_SECURE_NO_WARNINGS
-#define NUM_CURVES 5
+#define NUM_CURVES 50
 #define NUM_STEPS 100
 #define TIMER_ID 1
 #define TIMER_INTERVAL 40
@@ -16,6 +16,7 @@
 #include <iomanip>
 #include <commdlg.h>
 #include <cstdio>
+using namespace std;
 
 // =============================================
 // Constants and Enumerations
@@ -68,10 +69,10 @@ enum PolygonFillType {
 
 enum QuarterMenu {
     IDM_QUARTER_ALL = 10001,
-    IDM_QUARTER_1, 
+    IDM_QUARTER_1,
     IDM_QUARTER_2,
-    IDM_QUARTER_3, 
-    IDM_QUARTER_4  
+    IDM_QUARTER_3,
+    IDM_QUARTER_4
 };
 
 enum FilledCircleAlgorithm {
@@ -143,16 +144,16 @@ struct FilledRegionShape {
 };
 
 struct SplineShape {
-    std::vector<POINT> points;
+    vector<POINT> points;
     double tension;
     COLORREF color;
 };
 
 struct PolygonShape {
-    std::vector<POINT> vertices;
+    vector<POINT> vertices;
     COLORREF drawcolor;
-    COLORREF fill; 
-    PolygonFillType fillType; 
+    COLORREF fill;
+    PolygonFillType fillType;
 };
 
 struct FillCircleShape {
@@ -169,7 +170,7 @@ struct FillSquareHermitShape {
 };
 
 struct ClippedShape {
-    std::vector<POINT> points;
+    vector<POINT> points;
     COLORREF color;
     ClippingShapeType type;
 };
@@ -202,10 +203,10 @@ struct DrawnShape {
             spline.color = other.spline.color;
             break;
         case SHAPE_POLYGON:
-            new (&polygon) PolygonShape(); 
+            new (&polygon) PolygonShape();
             polygon.vertices = other.polygon.vertices;
             polygon.drawcolor = other.polygon.drawcolor;
-            polygon.fill = other.polygon.fill; 
+            polygon.fill = other.polygon.fill;
             polygon.fillType = other.polygon.fillType;
             break;
         case SHAPE_FILL_CIRCLE:
@@ -225,7 +226,7 @@ struct DrawnShape {
 
     DrawnShape& operator=(const DrawnShape& other) {
         if (this != &other) {
-            
+
             if (type == SHAPE_CARDINAL_SPLINE) {
                 spline.~SplineShape();
             }
@@ -243,16 +244,16 @@ struct DrawnShape {
             case SHAPE_ELLIPSE: ellipse = other.ellipse; break;
             case SHAPE_FILLED_REGION: filledRegion = other.filledRegion; break;
             case SHAPE_CARDINAL_SPLINE:
-                new (&spline) SplineShape(); 
+                new (&spline) SplineShape();
                 spline.points = other.spline.points;
                 spline.tension = other.spline.tension;
                 spline.color = other.spline.color;
                 break;
             case SHAPE_POLYGON:
-                new (&polygon) PolygonShape(); 
+                new (&polygon) PolygonShape();
                 polygon.vertices = other.polygon.vertices;
                 polygon.drawcolor = other.polygon.drawcolor;
-                polygon.fill = other.polygon.fill; 
+                polygon.fill = other.polygon.fill;
                 polygon.fillType = other.polygon.fillType;
                 break;
             case SHAPE_FILL_CIRCLE:
@@ -272,9 +273,9 @@ struct DrawnShape {
         return *this;
     }
 
-   
+
     ~DrawnShape() {
-        
+
         if (type == SHAPE_CARDINAL_SPLINE) {
             spline.~SplineShape();
         }
@@ -310,29 +311,29 @@ LineAlgoType lineAlgorithm = LINE_ALGO_BRESENHAM;
 CircleAlgoType circleAlgorithm = CIRCLE_ALGO_MIDPOINT;
 EllipseAlgoType ellipseAlgorithm = ELLIPSE_ALGO_MIDPOINT;
 FillAlgoType fillAlgorithm = FILL_ALGO_NON_RECURSIVE;
-PolygonFillType polygonFillType = POLYGON_FILL_NON_CONVEX; 
+PolygonFillType polygonFillType = POLYGON_FILL_NON_CONVEX;
 ClippingMode clippingMode = CLIPPING_NONE;
 ClippingShapeType clippingShapeType = CLIP_POINT;
 
 bool isDrawing = false;
 POINT startPoint;
 POINT endPoint;
-std::vector<POINT> controlPoints;
-std::vector<POINT> clippingPoints;
-std::vector<DrawnShape> drawnShapes;
+vector<POINT> controlPoints;
+vector<POINT> clippingPoints;
+vector<DrawnShape> drawnShapes;
 RECT clippingRect = { 200, 200, 600, 450 };
-std::vector<POINT> currentPolygonVertices;
+vector<POINT> currentPolygonVertices;
 bool isPolygonStarted = false;
 int selectedFillQuarter = 0;
 
 RECT bezierRect = { 100, 100, 700, 500 };
-COLORREF curveColors[NUM_CURVES] = {
-    RGB(255, 0, 0),    // Red
-    RGB(0, 128, 0),    // Green
-    RGB(0, 0, 255),    // Blue
-    RGB(255, 165, 0),  // Orange
-    RGB(128, 0, 128)   // Purple
-};
+//COLORREF curveColors[NUM_CURVES] = {
+//    RGB(255, 0, 0),    // Red
+//    RGB(0, 128, 0),    // Green
+//    RGB(0, 0, 255),    // Blue
+//    RGB(255, 165, 0),  // Orange
+//    RGB(128, 0, 128)   // Purple
+//};
 int currentStep = 0;
 bool isAnimating = false;
 
@@ -359,8 +360,8 @@ void swapPoints(POINT& p1, POINT& p2) {
 struct Edge {
     int yMax;
     double x;
-    double invSlope; 
-    int yMin; 
+    double invSlope;
+    int yMin;
     bool operator<(const Edge& other) const {
         return x < other.x;
     }
@@ -399,8 +400,8 @@ void DrawDDALine(HDC targetDC, POINT p1, POINT p2, COLORREF color) {
     int x2 = p2.x, y2 = p2.y;
 
     if (x1 > x2) {
-        std::swap(x1, x2);
-        std::swap(y1, y2);
+        swap(x1, x2);
+        swap(y1, y2);
     }
 
     int dx = x2 - x1;
@@ -418,8 +419,8 @@ void DrawDDALine(HDC targetDC, POINT p1, POINT p2, COLORREF color) {
     }
     else {
         if (y1 > y2) {
-            std::swap(x1, x2);
-            std::swap(y1, y2);
+            swap(x1, x2);
+            swap(y1, y2);
         }
         double mi = (dy == 0) ? 0.0 : (double)dx / dy;
         double x = x1;
@@ -440,8 +441,8 @@ void DrawMidpointLine(HDC targetDC, POINT p1, POINT p2, COLORREF color) {
 
     if (abs(dy) <= abs(dx)) {
         if (x1 > x2) {
-            std::swap(x1, x2);
-            std::swap(y1, y2);
+            swap(x1, x2);
+            swap(y1, y2);
         }
 
         dx = x2 - x1;
@@ -461,8 +462,8 @@ void DrawMidpointLine(HDC targetDC, POINT p1, POINT p2, COLORREF color) {
     }
     else {
         if (y1 > y2) {
-            std::swap(x1, x2);
-            std::swap(y1, y2);
+            swap(x1, x2);
+            swap(y1, y2);
         }
 
         dx = x2 - x1;
@@ -700,7 +701,7 @@ void FloodFillNRecursive(HDC targetDC, int x, int y, COLORREF initialPixelColor,
     COLORREF clickedColor = GetPixel(targetDC, x, y);
     if (clickedColor == fillColor) return;
 
-    std::stack<POINT> s;
+    stack<POINT> s;
     s.push({ x, y });
 
     while (!s.empty()) {
@@ -726,7 +727,7 @@ void FloodFillNRecursive(HDC targetDC, int x, int y, COLORREF initialPixelColor,
 
 // ----------------- Curve Algorithms -----------------
 
-void DrawCardinalSpline(HDC targetDC, const std::vector<POINT>& points, double tension, COLORREF color) {
+void DrawCardinalSpline(HDC targetDC, const vector<POINT>& points, double tension, COLORREF color) {
     if (points.size() < 4) return;
 
     double s = 0.5 * (1.0 - tension);
@@ -791,7 +792,7 @@ void DrawBezierStep(HDC hdc, POINT P0, POINT P1, POINT P2, POINT P3, int stepsTo
 }
 
 // ----------------- Polygon Algorithms -----------------
-void DrawPolygonOutline(HDC hdc, const std::vector<POINT>& vertices, COLORREF color) {
+void DrawPolygonOutline(HDC hdc, const vector<POINT>& vertices, COLORREF color) {
     if (vertices.empty()) return;
     for (size_t i = 0; i < vertices.size(); ++i) {
         POINT p1 = vertices[i];
@@ -801,7 +802,7 @@ void DrawPolygonOutline(HDC hdc, const std::vector<POINT>& vertices, COLORREF co
 }
 
 // -----------------  Convex Polygon Fill (simpler scanline) -----------------
-void ConvexPolygonFill(HDC hdc, const std::vector<POINT>& vertices, COLORREF color) {
+void ConvexPolygonFill(HDC hdc, const vector<POINT>& vertices, COLORREF color) {
     if (vertices.size() <= 3) return;
 
     int minY = INT_MAX;
@@ -814,7 +815,7 @@ void ConvexPolygonFill(HDC hdc, const std::vector<POINT>& vertices, COLORREF col
     }
 
     for (int y = minY; y <= maxY; ++y) {
-        std::vector<double> intersections;
+        vector<double> intersections;
         for (size_t i = 0; i < vertices.size(); ++i) {
             POINT p1 = vertices[i];
             POINT p2 = vertices[(i + 1) % vertices.size()];
@@ -826,9 +827,9 @@ void ConvexPolygonFill(HDC hdc, const std::vector<POINT>& vertices, COLORREF col
                 intersections.push_back(x_intersect);
             }
         }
-        std::sort(intersections.begin(), intersections.end());
+        sort(intersections.begin(), intersections.end());
 
-        
+
         for (size_t i = 0; i + 1 < intersections.size(); i += 2) {
             int x1 = Round(intersections[i]);
             int x2 = Round(intersections[i + 1]);
@@ -841,7 +842,7 @@ void ConvexPolygonFill(HDC hdc, const std::vector<POINT>& vertices, COLORREF col
 
 
 // -----------------  Non-Convex Polygon Fill (General Scanline Algorithm) -----------------
-void NonConvexPolygonFill(HDC hdc, const std::vector<POINT>& vertices, COLORREF color) {
+void NonConvexPolygonFill(HDC hdc, const vector<POINT>& vertices, COLORREF color) {
     if (vertices.size() <= 3) return;
 
     // 1. Build Edge Table (ET)
@@ -855,7 +856,7 @@ void NonConvexPolygonFill(HDC hdc, const std::vector<POINT>& vertices, COLORREF 
         if (p.y > maxY) maxY = p.y;
     }
 
-    std::vector<std::vector<Edge>> edgeTable(maxY + 1); // Size based on max Y
+    vector<vector<Edge>> edgeTable(maxY + 1); // Size based on max Y
 
     for (size_t i = 0; i < vertices.size(); ++i) {
         POINT p1 = vertices[i];
@@ -881,7 +882,7 @@ void NonConvexPolygonFill(HDC hdc, const std::vector<POINT>& vertices, COLORREF 
     }
 
     // 2. Initialize Active Edge List (AEL)
-    std::vector<Edge> activeEdgeList;
+    vector<Edge> activeEdgeList;
 
     // 3. Process Scanlines
     for (int y = minY; y <= maxY; ++y) {
@@ -892,13 +893,13 @@ void NonConvexPolygonFill(HDC hdc, const std::vector<POINT>& vertices, COLORREF 
 
         // Remove edges from AEL that have reached their yMax
         activeEdgeList.erase(
-            std::remove_if(activeEdgeList.begin(), activeEdgeList.end(),
+            remove_if(activeEdgeList.begin(), activeEdgeList.end(),
                 [y](const Edge& e) { return e.yMax == y; }), // yMax is exclusive for the last pixel
             activeEdgeList.end()
         );
 
         // Sort AEL by current x-coordinate
-        std::sort(activeEdgeList.begin(), activeEdgeList.end(), [](const Edge& a, const Edge& b) {
+        sort(activeEdgeList.begin(), activeEdgeList.end(), [](const Edge& a, const Edge& b) {
             return a.x < b.x;
             });
 
@@ -919,14 +920,14 @@ void NonConvexPolygonFill(HDC hdc, const std::vector<POINT>& vertices, COLORREF 
     }
 }
 
-void DrawFilledPolygon(HDC hdc, const std::vector<POINT>& vertices, COLORREF color, PolygonFillType fillType, COLORREF fillcolor) {
-    
-    DrawPolygonOutline(hdc, vertices, color); 
+void DrawFilledPolygon(HDC hdc, const vector<POINT>& vertices, COLORREF color, PolygonFillType fillType, COLORREF fillcolor) {
+
+    DrawPolygonOutline(hdc, vertices, color);
 
     if (fillType == POLYGON_FILL_CONVEX) {
         ConvexPolygonFill(hdc, vertices, fillcolor);
     }
-    else { 
+    else {
         NonConvexPolygonFill(hdc, vertices, fillcolor);
     }
 }
@@ -988,9 +989,9 @@ void DrawFilledCircle(HDC hdc, int xc, int yc, int radius, int quarter, COLORREF
                 Ellipse(hdc, px - r, py - r, px + r, py + r);
             }
             };
-        for (int y = yc - radius; y <= yc + radius; y += r) 
+        for (int y = yc - radius; y <= yc + radius; y += r)
         {
-            for (int x = xc - radius; x <= xc + radius; x += r) 
+            for (int x = xc - radius; x <= xc + radius; x += r)
             {
                 int dx = x - xc;
                 int dy = y - yc;
@@ -1138,15 +1139,15 @@ void ClipLine(HDC hdc, POINT p1, POINT p2, COLORREF color) {
     DeleteObject(hPen);
 }
 
-void ClipPolygon(HDC targetDC, const std::vector<POINT>& polygon, COLORREF color) {
+void ClipPolygon(HDC targetDC, const vector<POINT>& polygon, COLORREF color) {
     HPEN hPen = CreatePen(PS_SOLID, 1, color);
     HPEN oldPen = (HPEN)SelectObject(targetDC, hPen);
     if (polygon.size() < 3) return;
 
-    std::vector<POINT> output = polygon;
+    vector<POINT> output = polygon;
 
     for (int edge = 0; edge < 4; edge++) {
-        std::vector<POINT> input = output;
+        vector<POINT> input = output;
         output.clear();
 
         POINT s = input.back();
@@ -1155,19 +1156,19 @@ void ClipPolygon(HDC targetDC, const std::vector<POINT>& polygon, COLORREF color
 
             bool pInside = false, sInside = false;
             switch (edge) {
-            case 0: 
+            case 0:
                 pInside = p.x >= clippingRect.left;
                 sInside = s.x >= clippingRect.left;
                 break;
-            case 1: 
+            case 1:
                 pInside = p.x <= clippingRect.right;
                 sInside = s.x <= clippingRect.right;
                 break;
-            case 2: 
+            case 2:
                 pInside = p.y >= clippingRect.top;
                 sInside = s.y >= clippingRect.top;
                 break;
-            case 3: 
+            case 3:
                 pInside = p.y <= clippingRect.bottom;
                 sInside = s.y <= clippingRect.bottom;
                 break;
@@ -1177,19 +1178,19 @@ void ClipPolygon(HDC targetDC, const std::vector<POINT>& polygon, COLORREF color
                 if (!sInside) {
                     POINT intersect;
                     switch (edge) {
-                    case 0: 
+                    case 0:
                         intersect.x = clippingRect.left;
                         intersect.y = s.y + (p.y - s.y) * (clippingRect.left - s.x) / (p.x - s.x);
                         break;
-                    case 1: 
+                    case 1:
                         intersect.x = clippingRect.right;
                         intersect.y = s.y + (p.y - s.y) * (clippingRect.right - s.x) / (p.x - s.x);
                         break;
-                    case 2: 
+                    case 2:
                         intersect.y = clippingRect.top;
                         intersect.x = s.x + (p.x - s.x) * (clippingRect.top - s.y) / (p.y - s.y);
                         break;
-                    case 3: 
+                    case 3:
                         intersect.y = clippingRect.bottom;
                         intersect.x = s.x + (p.x - s.x) * (clippingRect.bottom - s.y) / (p.y - s.y);
                         break;
@@ -1201,19 +1202,19 @@ void ClipPolygon(HDC targetDC, const std::vector<POINT>& polygon, COLORREF color
             else if (sInside) {
                 POINT intersect;
                 switch (edge) {
-                case 0: 
+                case 0:
                     intersect.x = clippingRect.left;
                     intersect.y = s.y + (p.y - s.y) * (clippingRect.left - s.x) / (p.x - s.x);
                     break;
-                case 1: 
+                case 1:
                     intersect.x = clippingRect.right;
                     intersect.y = s.y + (p.y - s.y) * (clippingRect.right - s.x) / (p.x - s.x);
                     break;
-                case 2: 
+                case 2:
                     intersect.y = clippingRect.top;
                     intersect.x = s.x + (p.x - s.x) * (clippingRect.top - s.y) / (p.y - s.y);
                     break;
-                case 3: 
+                case 3:
                     intersect.y = clippingRect.bottom;
                     intersect.x = s.x + (p.x - s.x) * (clippingRect.bottom - s.y) / (p.y - s.y);
                     break;
@@ -1365,7 +1366,7 @@ void SaveToFile(HWND hwnd) {
     ofn.Flags = OFN_OVERWRITEPROMPT;
 
     if (GetSaveFileNameW(&ofn)) {
-        std::ofstream out(fileName, std::ios::binary);
+        ofstream out(fileName, ios::binary);
 
         if (!out) return;
 
@@ -1409,7 +1410,7 @@ void SaveToFile(HWND hwnd) {
         }
         out.write(reinterpret_cast<const char*>(&bgColor), sizeof(bgColor));
         out.close();
-        std::wcout << L"Saved to: " << fileName << std::endl;
+        wcout << L"Saved to: " << fileName << endl;
     }
 }
 
@@ -1427,7 +1428,7 @@ void LoadFromFile(HWND hwnd) {
     ofn.Flags = OFN_FILEMUSTEXIST;
 
     if (GetOpenFileNameW(&ofn)) {
-        std::ifstream in(fileName, std::ios::binary);
+        ifstream in(fileName, ios::binary);
 
 
         if (!in) return;
@@ -1457,7 +1458,7 @@ void LoadFromFile(HWND hwnd) {
 
 
                 new (&shape.spline) SplineShape();
-                shape.spline = std::move(tempSpline);
+                shape.spline = move(tempSpline);
                 break;
             }
             case SHAPE_POLYGON: {
@@ -1470,7 +1471,7 @@ void LoadFromFile(HWND hwnd) {
                 in.read(reinterpret_cast<char*>(&tempPolygon.fillType), sizeof(PolygonFillType));
                 in.read(reinterpret_cast<char*>(&tempPolygon.fill), sizeof(COLORREF));
                 new (&shape.polygon) PolygonShape();
-                shape.polygon = std::move(tempPolygon);
+                shape.polygon = move(tempPolygon);
                 break;
             }
 
@@ -1510,7 +1511,7 @@ void LoadFromFile(HWND hwnd) {
         in.close();
         RedrawAllShapesToBitmap(hMemDC);
         InvalidateRect(hwnd, NULL, FALSE);
-        std::wcout << L"Loaded from: " << fileName << std::endl;
+        wcout << L"Loaded from: " << fileName << endl;
     }
 }
 // =============================================
@@ -1692,9 +1693,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         hdc = GetDC(hwnd);
         hMemDC = CreateCompatibleDC(hdc);
         hBitmap = CreateCompatibleBitmap(hdc, clientRect.right, clientRect.bottom);
-        hOldBitmap = (HBITMAP)SelectObject(hMemDC, hBitmap); 
+        hOldBitmap = (HBITMAP)SelectObject(hMemDC, hBitmap);
         ReleaseDC(hwnd, hdc);
-        RedrawAllShapesToBitmap(hMemDC); 
+        RedrawAllShapesToBitmap(hMemDC);
 
         // Load custom cursors
         hCursorArrow = LoadCursor(NULL, IDC_ARROW);
@@ -1702,33 +1703,33 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         hCursorWait = LoadCursor(NULL, IDC_WAIT);
         hCursorCross = LoadCursor(NULL, IDC_CROSS);
         hCursorHelp = LoadCursor(NULL, IDC_HELP);
-        currentCursor = hCursorArrow; 
+        currentCursor = hCursorArrow;
 
-        CreateMainMenu(hwnd); 
-        AllocConsole(); 
+        CreateMainMenu(hwnd);
+        AllocConsole();
         FILE* consoleOutput;
         if (freopen_s(&consoleOutput, "CONOUT$", "w", stdout) != 0) {
             MessageBox(hwnd, L"Failed to redirect console output.", L"Error", MB_OK | MB_ICONERROR);
         }
-        std::wcout.imbue(std::locale(""));
-        std::wcout << L"Console opened. Drawing application running." << std::endl;
-        std::wcout << L"Current Drawing Color: R" << GetRValue(drawColor) << L" G" << GetGValue(drawColor) << L" B" << GetBValue(drawColor) << std::endl;
-        std::wcout << L"Current Fill Color: R" << GetRValue(fillColor) << L" G" << GetGValue(fillColor) << L" B" << GetBValue(fillColor) << std::endl;
-        std::wcout << L"Current Background Color: R" << GetRValue(bgColor) << L" G" << GetGValue(bgColor) << L" B" << GetBValue(bgColor) << std::endl;
+        wcout.imbue(locale(""));
+        wcout << L"Console opened. Drawing application running." << endl;
+        wcout << L"Current Drawing Color: R" << GetRValue(drawColor) << L" G" << GetGValue(drawColor) << L" B" << GetBValue(drawColor) << endl;
+        wcout << L"Current Fill Color: R" << GetRValue(fillColor) << L" G" << GetGValue(fillColor) << L" B" << GetBValue(fillColor) << endl;
+        wcout << L"Current Background Color: R" << GetRValue(bgColor) << L" G" << GetGValue(bgColor) << L" B" << GetBValue(bgColor) << endl;
         break;
 
     case WM_SIZE:
         GetClientRect(hwnd, &clientRect);
         if (hMemDC && hOldBitmap) {
-            SelectObject(hMemDC, hOldBitmap); 
-            DeleteObject(hBitmap); 
+            SelectObject(hMemDC, hOldBitmap);
+            DeleteObject(hBitmap);
         }
         hdc = GetDC(hwnd);
-        hBitmap = CreateCompatibleBitmap(hdc, clientRect.right, clientRect.bottom); 
+        hBitmap = CreateCompatibleBitmap(hdc, clientRect.right, clientRect.bottom);
         hOldBitmap = (HBITMAP)SelectObject(hMemDC, hBitmap);
         ReleaseDC(hwnd, hdc);
 
-        RedrawAllShapesToBitmap(hMemDC); 
+        RedrawAllShapesToBitmap(hMemDC);
         InvalidateRect(hwnd, NULL, FALSE);
         break;
 
@@ -1737,7 +1738,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         int wmId = LOWORD(wParam);
         switch (wmId) {
             // File Menu
-        case 1001: 
+        case 1001:
             drawnShapes.clear();
             controlPoints.clear();
             clippingPoints.clear();
@@ -1748,12 +1749,12 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             fillColor = RGB(255, 0, 0);
             bgColor = RGB(255, 255, 255);
             clippingMode = CLIPPING_NONE;
-            RedrawAllShapesToBitmap(hMemDC); 
+            RedrawAllShapesToBitmap(hMemDC);
             InvalidateRect(hwnd, NULL, FALSE);
             drawingMode = MODE_NONE;
             filledCircleAlgorithm = FILL_CIRCLE_ALGO_NONE;
             SetCursor(hCursorArrow);
-            std::wcout << L"New drawing created. Screen cleared and colors reset." << std::endl;
+            wcout << L"New drawing created. Screen cleared and colors reset." << endl;
             break;
         case 1002:
             LoadFromFile(hwnd);
@@ -1767,16 +1768,16 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             break;
 
             // Colors Menu - Drawing Color
-        case 2101: drawColor = RGB(255, 0, 0); std::wcout << L"Drawing Color: Red" << std::endl; break;
-        case 2102: drawColor = RGB(0, 255, 0); std::wcout << L"Drawing Color: Green" << std::endl; break;
-        case 2103: drawColor = RGB(0, 0, 255); std::wcout << L"Drawing Color: Blue" << std::endl; break;
-        case 2104: drawColor = RGB(0, 0, 0);    std::wcout << L"Drawing Color: Black" << std::endl; break;
-        case 2105: drawColor = RGB(255, 255, 0); std::wcout << L"Drawing Color: Yellow" << std::endl; break;
-        case 2106: drawColor = RGB(255, 0, 255); std::wcout << L"Drawing Color: Magenta" << std::endl; break;
-        case 2107: drawColor = RGB(0, 255, 255); std::wcout << L"Drawing Color: Cyan" << std::endl; break;
-        case 2108: drawColor = RGB(128, 0, 0); std::wcout << L"Drawing Color: Dark Red" << std::endl; break;
-        case 2109: drawColor = RGB(0, 128, 0); std::wcout << L"Drawing Color: Dark Green" << std::endl; break;
-        case 2110: drawColor = RGB(0, 0, 128); std::wcout << L"Drawing Color: Dark Blue" << std::endl; break;
+        case 2101: drawColor = RGB(255, 0, 0); wcout << L"Drawing Color: Red" << endl; break;
+        case 2102: drawColor = RGB(0, 255, 0); wcout << L"Drawing Color: Green" << endl; break;
+        case 2103: drawColor = RGB(0, 0, 255); wcout << L"Drawing Color: Blue" << endl; break;
+        case 2104: drawColor = RGB(0, 0, 0);    wcout << L"Drawing Color: Black" << endl; break;
+        case 2105: drawColor = RGB(255, 255, 0); wcout << L"Drawing Color: Yellow" << endl; break;
+        case 2106: drawColor = RGB(255, 0, 255); wcout << L"Drawing Color: Magenta" << endl; break;
+        case 2107: drawColor = RGB(0, 255, 255); wcout << L"Drawing Color: Cyan" << endl; break;
+        case 2108: drawColor = RGB(128, 0, 0); wcout << L"Drawing Color: Dark Red" << endl; break;
+        case 2109: drawColor = RGB(0, 128, 0); wcout << L"Drawing Color: Dark Green" << endl; break;
+        case 2110: drawColor = RGB(0, 0, 128); wcout << L"Drawing Color: Dark Blue" << endl; break;
         case 2111: {
             CHOOSECOLOR cc;
             ZeroMemory(&cc, sizeof(cc));
@@ -1789,22 +1790,22 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
 
             if (ChooseColor(&cc) == TRUE) {
                 drawColor = cc.rgbResult;
-                std::wcout << L"Drawing Color: Custom (R" << GetRValue(drawColor) << L" G" << GetGValue(drawColor) << L" B" << GetBValue(drawColor) << L")" << std::endl;
+                wcout << L"Drawing Color: Custom (R" << GetRValue(drawColor) << L" G" << GetGValue(drawColor) << L" B" << GetBValue(drawColor) << L")" << endl;
             }
             break;
         }
 
                  // Colors Menu - Fill Color
-        case 2201: fillColor = RGB(255, 0, 0); std::wcout << L"Fill Color: Red" << std::endl; break;
-        case 2202: fillColor = RGB(0, 255, 0); std::wcout << L"Fill Color: Green" << std::endl; break;
-        case 2203: fillColor = RGB(0, 0, 255); std::wcout << L"Fill Color: Blue" << std::endl; break;
-        case 2204: fillColor = RGB(0, 0, 0);    std::wcout << L"Fill Color: Black" << std::endl; break;
-        case 2205: fillColor = RGB(255, 255, 0); std::wcout << L"Fill Color: Yellow" << std::endl; break;
-        case 2206: fillColor = RGB(255, 0, 255); std::wcout << L"Fill Color: Magenta" << std::endl; break;
-        case 2207: fillColor = RGB(0, 255, 255); std::wcout << L"Fill Color: Cyan" << std::endl; break;
-        case 2208: fillColor = RGB(128, 0, 0); std::wcout << L"Fill Color: Dark Red" << std::endl; break;
-        case 2209: fillColor = RGB(0, 128, 0); std::wcout << L"Fill Color: Dark Green" << std::endl; break;
-        case 2210: fillColor = RGB(0, 0, 128); std::wcout << L"Fill Color: Dark Blue" << std::endl; break;
+        case 2201: fillColor = RGB(255, 0, 0); wcout << L"Fill Color: Red" << endl; break;
+        case 2202: fillColor = RGB(0, 255, 0); wcout << L"Fill Color: Green" << endl; break;
+        case 2203: fillColor = RGB(0, 0, 255); wcout << L"Fill Color: Blue" << endl; break;
+        case 2204: fillColor = RGB(0, 0, 0);    wcout << L"Fill Color: Black" << endl; break;
+        case 2205: fillColor = RGB(255, 255, 0); wcout << L"Fill Color: Yellow" << endl; break;
+        case 2206: fillColor = RGB(255, 0, 255); wcout << L"Fill Color: Magenta" << endl; break;
+        case 2207: fillColor = RGB(0, 255, 255); wcout << L"Fill Color: Cyan" << endl; break;
+        case 2208: fillColor = RGB(128, 0, 0); wcout << L"Fill Color: Dark Red" << endl; break;
+        case 2209: fillColor = RGB(0, 128, 0); wcout << L"Fill Color: Dark Green" << endl; break;
+        case 2210: fillColor = RGB(0, 0, 128); wcout << L"Fill Color: Dark Blue" << endl; break;
         case 2211: { // Custom Fill Color
             CHOOSECOLOR cc;
             ZeroMemory(&cc, sizeof(cc));
@@ -1817,19 +1818,19 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
 
             if (ChooseColor(&cc) == TRUE) {
                 fillColor = cc.rgbResult;
-                std::wcout << L"Fill Color: Custom (R" << GetRValue(fillColor) << L" G" << GetGValue(fillColor) << L" B" << GetBValue(fillColor) << L")" << std::endl;
+                wcout << L"Fill Color: Custom (R" << GetRValue(fillColor) << L" G" << GetGValue(fillColor) << L" B" << GetBValue(fillColor) << L")" << endl;
             }
             break;
         }
 
                  // Colors Menu - Background Color
-        case 2301: bgColor = RGB(255, 255, 255); RedrawAllShapesToBitmap(hMemDC); InvalidateRect(hwnd, NULL, FALSE); std::wcout << L"Background Color: White" << std::endl; break;
-        case 2302: bgColor = RGB(192, 192, 192); RedrawAllShapesToBitmap(hMemDC); InvalidateRect(hwnd, NULL, FALSE); std::wcout << L"Background Color: Light Gray" << std::endl; break;
-        case 2303: bgColor = RGB(128, 128, 128); RedrawAllShapesToBitmap(hMemDC); InvalidateRect(hwnd, NULL, FALSE); std::wcout << L"Background Color: Gray" << std::endl; break;
-        case 2304: bgColor = RGB(0, 0, 0); RedrawAllShapesToBitmap(hMemDC); InvalidateRect(hwnd, NULL, FALSE); std::wcout << L"Background Color: Black" << std::endl; break;
-        case 2305: bgColor = RGB(255, 0, 0); RedrawAllShapesToBitmap(hMemDC); InvalidateRect(hwnd, NULL, FALSE); std::wcout << L"Background Color: Red" << std::endl; break;
-        case 2306: bgColor = RGB(0, 255, 0); RedrawAllShapesToBitmap(hMemDC); InvalidateRect(hwnd, NULL, FALSE); std::wcout << L"Background Color: Green" << std::endl; break;
-        case 2307: bgColor = RGB(0, 0, 255); RedrawAllShapesToBitmap(hMemDC); InvalidateRect(hwnd, NULL, FALSE); std::wcout << L"Background Color: Blue" << std::endl; break;
+        case 2301: bgColor = RGB(255, 255, 255); RedrawAllShapesToBitmap(hMemDC); InvalidateRect(hwnd, NULL, FALSE); wcout << L"Background Color: White" << endl; break;
+        case 2302: bgColor = RGB(192, 192, 192); RedrawAllShapesToBitmap(hMemDC); InvalidateRect(hwnd, NULL, FALSE); wcout << L"Background Color: Light Gray" << endl; break;
+        case 2303: bgColor = RGB(128, 128, 128); RedrawAllShapesToBitmap(hMemDC); InvalidateRect(hwnd, NULL, FALSE); wcout << L"Background Color: Gray" << endl; break;
+        case 2304: bgColor = RGB(0, 0, 0); RedrawAllShapesToBitmap(hMemDC); InvalidateRect(hwnd, NULL, FALSE); wcout << L"Background Color: Black" << endl; break;
+        case 2305: bgColor = RGB(255, 0, 0); RedrawAllShapesToBitmap(hMemDC); InvalidateRect(hwnd, NULL, FALSE); wcout << L"Background Color: Red" << endl; break;
+        case 2306: bgColor = RGB(0, 255, 0); RedrawAllShapesToBitmap(hMemDC); InvalidateRect(hwnd, NULL, FALSE); wcout << L"Background Color: Green" << endl; break;
+        case 2307: bgColor = RGB(0, 0, 255); RedrawAllShapesToBitmap(hMemDC); InvalidateRect(hwnd, NULL, FALSE); wcout << L"Background Color: Blue" << endl; break;
         case 2308: { // Custom Background Color
             CHOOSECOLOR cc;
             ZeroMemory(&cc, sizeof(cc));
@@ -1842,38 +1843,38 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
 
             if (ChooseColor(&cc) == TRUE) {
                 bgColor = cc.rgbResult;
-                RedrawAllShapesToBitmap(hMemDC); 
+                RedrawAllShapesToBitmap(hMemDC);
                 InvalidateRect(hwnd, NULL, FALSE);
-                std::wcout << L"Background Color: Custom (R" << GetRValue(bgColor) << L" G" << GetGValue(bgColor) << L" B" << GetBValue(bgColor) << L")" << std::endl;
+                wcout << L"Background Color: Custom (R" << GetRValue(bgColor) << L" G" << GetGValue(bgColor) << L" B" << GetBValue(bgColor) << L")" << endl;
             }
             break;
         }
 
                  // Shapes Menu - Lines
-        case 3001: drawingMode = MODE_DRAW_LINE; lineAlgorithm = LINE_ALGO_BRESENHAM; SetCursor(currentCursor); std::wcout << L"Mode: Draw Line (Bresenham)" << std::endl; break;
-        case 3002: drawingMode = MODE_DRAW_LINE; lineAlgorithm = LINE_ALGO_DDA; SetCursor(currentCursor); std::wcout << L"Mode: Draw Line (DDA)" << std::endl; break;
-        case 3003: drawingMode = MODE_DRAW_LINE; lineAlgorithm = LINE_ALGO_MIDPOINT; SetCursor(currentCursor); std::wcout << L"Mode: Draw Line (Midpoint)" << std::endl; break;
-        case 3004: drawingMode = MODE_DRAW_LINE; lineAlgorithm = LINE_ALGO_PARAMETRIC; SetCursor(currentCursor); std::wcout << L"Mode: Draw Line (Parametric)" << std::endl; break;
+        case 3001: drawingMode = MODE_DRAW_LINE; lineAlgorithm = LINE_ALGO_BRESENHAM; SetCursor(currentCursor); wcout << L"Mode: Draw Line (Bresenham)" << endl; break;
+        case 3002: drawingMode = MODE_DRAW_LINE; lineAlgorithm = LINE_ALGO_DDA; SetCursor(currentCursor); wcout << L"Mode: Draw Line (DDA)" << endl; break;
+        case 3003: drawingMode = MODE_DRAW_LINE; lineAlgorithm = LINE_ALGO_MIDPOINT; SetCursor(currentCursor); wcout << L"Mode: Draw Line (Midpoint)" << endl; break;
+        case 3004: drawingMode = MODE_DRAW_LINE; lineAlgorithm = LINE_ALGO_PARAMETRIC; SetCursor(currentCursor); wcout << L"Mode: Draw Line (Parametric)" << endl; break;
 
             // Shapes Menu - Circles
-        case 4001: drawingMode = MODE_DRAW_CIRCLE; circleAlgorithm = CIRCLE_ALGO_DIRECT;  SetCursor(currentCursor); std::wcout << L"Mode: Draw Circle (Direct)" << std::endl; break;
-        case 4002: drawingMode = MODE_DRAW_CIRCLE; circleAlgorithm = CIRCLE_ALGO_POLAR; SetCursor(currentCursor); std::wcout << L"Mode: Draw Circle (Polar)" << std::endl; break;
-        case 4003: drawingMode = MODE_DRAW_CIRCLE; circleAlgorithm = CIRCLE_ALGO_ITERATIVE_POLAR; SetCursor(currentCursor); std::wcout << L"Mode: Draw Circle (Iterative Polar)" << std::endl; break;
-        case 4004: drawingMode = MODE_DRAW_CIRCLE; circleAlgorithm = CIRCLE_ALGO_MIDPOINT; SetCursor(currentCursor); std::wcout << L"Mode: Draw Circle (Midpoint)" << std::endl; break;
-        case 4005: drawingMode = MODE_DRAW_CIRCLE; circleAlgorithm = CIRCLE_ALGO_MODIFIED_MIDPOINT; SetCursor(currentCursor); std::wcout << L"Mode: Draw Circle (Modified Midpoint)" << std::endl; break;
+        case 4001: drawingMode = MODE_DRAW_CIRCLE; circleAlgorithm = CIRCLE_ALGO_DIRECT;  SetCursor(currentCursor); wcout << L"Mode: Draw Circle (Direct)" << endl; break;
+        case 4002: drawingMode = MODE_DRAW_CIRCLE; circleAlgorithm = CIRCLE_ALGO_POLAR; SetCursor(currentCursor); wcout << L"Mode: Draw Circle (Polar)" << endl; break;
+        case 4003: drawingMode = MODE_DRAW_CIRCLE; circleAlgorithm = CIRCLE_ALGO_ITERATIVE_POLAR; SetCursor(currentCursor); wcout << L"Mode: Draw Circle (Iterative Polar)" << endl; break;
+        case 4004: drawingMode = MODE_DRAW_CIRCLE; circleAlgorithm = CIRCLE_ALGO_MIDPOINT; SetCursor(currentCursor); wcout << L"Mode: Draw Circle (Midpoint)" << endl; break;
+        case 4005: drawingMode = MODE_DRAW_CIRCLE; circleAlgorithm = CIRCLE_ALGO_MODIFIED_MIDPOINT; SetCursor(currentCursor); wcout << L"Mode: Draw Circle (Modified Midpoint)" << endl; break;
 
             // Shapes Menu - Ellipses
-        case 5001: drawingMode = MODE_DRAW_ELLIPSE; ellipseAlgorithm = ELLIPSE_ALGO_DIRECT; SetCursor(currentCursor); std::wcout << L"Mode: Draw Ellipse (Direct)" << std::endl; break;
-        case 5002: drawingMode = MODE_DRAW_ELLIPSE; ellipseAlgorithm = ELLIPSE_ALGO_POLAR;  SetCursor(currentCursor); std::wcout << L"Mode: Draw Ellipse (Polar)" << std::endl; break;
-        case 5003: drawingMode = MODE_DRAW_ELLIPSE; ellipseAlgorithm = ELLIPSE_ALGO_MIDPOINT;  SetCursor(currentCursor); std::wcout << L"Mode: Draw Ellipse (Midpoint)" << std::endl; break;
+        case 5001: drawingMode = MODE_DRAW_ELLIPSE; ellipseAlgorithm = ELLIPSE_ALGO_DIRECT; SetCursor(currentCursor); wcout << L"Mode: Draw Ellipse (Direct)" << endl; break;
+        case 5002: drawingMode = MODE_DRAW_ELLIPSE; ellipseAlgorithm = ELLIPSE_ALGO_POLAR;  SetCursor(currentCursor); wcout << L"Mode: Draw Ellipse (Polar)" << endl; break;
+        case 5003: drawingMode = MODE_DRAW_ELLIPSE; ellipseAlgorithm = ELLIPSE_ALGO_MIDPOINT;  SetCursor(currentCursor); wcout << L"Mode: Draw Ellipse (Midpoint)" << endl; break;
 
             // Shapes Menu - Flood Fill
-        case 6001: drawingMode = MODE_FLOOD_FILL; fillAlgorithm = FILL_ALGO_RECURSIVE;  SetCursor(currentCursor); std::wcout << L"Mode: Flood Fill (Recursive)" << std::endl; break;
-        case 6002: drawingMode = MODE_FLOOD_FILL; fillAlgorithm = FILL_ALGO_NON_RECURSIVE;  SetCursor(currentCursor); std::wcout << L"Mode: Flood Fill (Non-Recursive)" << std::endl; break;
+        case 6001: drawingMode = MODE_FLOOD_FILL; fillAlgorithm = FILL_ALGO_RECURSIVE;  SetCursor(currentCursor); wcout << L"Mode: Flood Fill (Recursive)" << endl; break;
+        case 6002: drawingMode = MODE_FLOOD_FILL; fillAlgorithm = FILL_ALGO_NON_RECURSIVE;  SetCursor(currentCursor); wcout << L"Mode: Flood Fill (Non-Recursive)" << endl; break;
 
             // Shapes Menu - Fill circle with lines & circles
-        case 6003:drawingMode = MODE_FILL_CIRCLE; filledCircleAlgorithm = FILL_CIRCLE_LINES; SetCursor(currentCursor); std::wcout << L"Mode: Fill Circle with Lines " << std::endl; break;
-        case 6004:drawingMode = MODE_FILL_CIRCLE; filledCircleAlgorithm = FILL_CIRCLE_CIRCLES; SetCursor(currentCursor); std::wcout << L"Mode: Fill Circle with Circles " << std::endl; break;
+        case 6003:drawingMode = MODE_FILL_CIRCLE; filledCircleAlgorithm = FILL_CIRCLE_LINES; SetCursor(currentCursor); wcout << L"Mode: Fill Circle with Lines " << endl; break;
+        case 6004:drawingMode = MODE_FILL_CIRCLE; filledCircleAlgorithm = FILL_CIRCLE_CIRCLES; SetCursor(currentCursor); wcout << L"Mode: Fill Circle with Circles " << endl; break;
 
         case IDM_QUARTER_ALL:
             selectedFillQuarter = 0;
@@ -1896,50 +1897,50 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             CheckMenuRadioItem(hMenu, IDM_QUARTER_ALL, IDM_QUARTER_4, IDM_QUARTER_4, MF_BYCOMMAND);
             break;
             // Shapes Menu - Fill Sqaure Hermite
-        case 6005:drawingMode = MODE_FILL_SQUARE_HERMIT; controlPoints.clear(); SetCursor(currentCursor); std::wcout << L"Mode: Hermite Square Fill (Click twice then drag)" << std::endl; break;
+        case 6005:drawingMode = MODE_FILL_SQUARE_HERMIT; controlPoints.clear(); SetCursor(currentCursor); wcout << L"Mode: Hermite Square Fill (Click twice then drag)" << endl; break;
 
             // Shapes Menu - Curves
-        case 7001: drawingMode = MODE_CARDINAL_SPLINE; controlPoints.clear(); SetCursor(currentCursor); std::wcout << L"Mode: Cardinal Spline (Click for points, Right-click to finish)" << std::endl; break;
+        case 7001: drawingMode = MODE_CARDINAL_SPLINE; controlPoints.clear(); SetCursor(currentCursor); wcout << L"Mode: Cardinal Spline (Click for points, Right-click to finish)" << endl; break;
         case 7002:  // Bezier Animation
             drawingMode = MODE_BEZIER_ANIMATION;
             currentStep = 0;
             isAnimating = true;
             SetTimer(hwnd, TIMER_ID, TIMER_INTERVAL, NULL);
-            std::wcout << L"Mode: Bezier Curve Animation" << std::endl;
+            wcout << L"Mode: Bezier Curve Animation" << endl;
             break;
 
             // Shapes Menu - Polygons
         case 7101:
             drawingMode = MODE_DRAW_POLYGON;
-            isPolygonStarted = false; 
-            currentPolygonVertices.clear(); 
+            isPolygonStarted = false;
+            currentPolygonVertices.clear();
             SetCursor(currentCursor);
-            std::wcout << L"Mode: Draw Polygon (Click for points, Right-click to finish)" << std::endl;
+            wcout << L"Mode: Draw Polygon (Click for points, Right-click to finish)" << endl;
             break;
         case 7102:
             polygonFillType = POLYGON_FILL_CONVEX;
-            std::wcout << L"Polygon Fill Algorithm: Convex" << std::endl;
+            wcout << L"Polygon Fill Algorithm: Convex" << endl;
             break;
         case 7103:
             polygonFillType = POLYGON_FILL_NON_CONVEX;
-            std::wcout << L"Polygon Fill Algorithm: Non-Convex" << std::endl;
+            wcout << L"Polygon Fill Algorithm: Non-Convex" << endl;
             break;
 
 
             // Edit Menu
-        case 8001: 
+        case 8001:
             drawnShapes.clear();
             controlPoints.clear();
             clippingPoints.clear();
-            currentPolygonVertices.clear(); 
+            currentPolygonVertices.clear();
             isPolygonStarted = false;
 
-            RedrawAllShapesToBitmap(hMemDC); 
+            RedrawAllShapesToBitmap(hMemDC);
             InvalidateRect(hwnd, NULL, FALSE);
             drawingMode = MODE_NONE;
             clippingMode = CLIPPING_NONE;
             SetCursor(currentCursor);
-            std::wcout << L"Screen cleared." << std::endl;
+            wcout << L"Screen cleared." << endl;
             break;
 
 
@@ -1957,7 +1958,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             RedrawAllShapesToBitmap(hMemDC);
             clippingPoints.clear();
             drawingMode = MODE_NONE;
-            std::wcout << L"Rectangle Clipping Enabled" << std::endl;
+            wcout << L"Rectangle Clipping Enabled" << endl;
             InvalidateRect(hwnd, NULL, FALSE);
             break;
         case 11002: // Enable Square Clipping
@@ -1966,14 +1967,14 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             RedrawAllShapesToBitmap(hMemDC);
             clippingPoints.clear();
             drawingMode = MODE_NONE;
-            std::wcout << L"Square Clipping Enabled" << std::endl;
+            wcout << L"Square Clipping Enabled" << endl;
             InvalidateRect(hwnd, NULL, FALSE);
             break;
         case 11003: // Disable Clipping
             clippingMode = CLIPPING_NONE;
             clippingPoints.clear();
             RedrawAllShapesToBitmap(hMemDC);
-            std::wcout << L"Clipping Disabled" << std::endl;
+            wcout << L"Clipping Disabled" << endl;
             InvalidateRect(hwnd, NULL, FALSE);
             break;
 
@@ -1982,21 +1983,21 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             clippingShapeType = CLIP_POINT;
             clippingPoints.clear();
             RedrawAllShapesToBitmap(hMemDC);
-            std::wcout << L"Clipping Points Mode" << std::endl;
+            wcout << L"Clipping Points Mode" << endl;
             break;
         case 10012: // Clip Lines
             clippingShapeType = CLIP_LINE;
             clippingPoints.clear();
-            std::wcout << L"Clipping Lines Mode" << std::endl;
+            wcout << L"Clipping Lines Mode" << endl;
             break;
         case 10013: // Clip Polygon
             clippingShapeType = CLIP_POLYGON;
             clippingPoints.clear();
-            std::wcout << L"Clipping Polygon Mode" << std::endl;
+            wcout << L"Clipping Polygon Mode" << endl;
             break;
         case 10014: // Clear Clipping Points
             clippingPoints.clear();
-            std::wcout << L"Clipping Points Cleared" << std::endl;
+            wcout << L"Clipping Points Cleared" << endl;
             InvalidateRect(hwnd, NULL, FALSE);
             break;
 
@@ -2036,7 +2037,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 }
                 else {
 
-                    std::wcout << L"Point (" << p.x << L"," << p.y << L") is outside clipping region - ignored" << std::endl;
+                    wcout << L"Point (" << p.x << L"," << p.y << L") is outside clipping region - ignored" << endl;
                     return 0;
 
                 }
@@ -2056,7 +2057,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             }
             RedrawAllShapesToBitmap(hMemDC);
             InvalidateRect(hwnd, NULL, FALSE);
-            std::wcout << L"Clipping point added: (" << p.x << L", " << p.y << L")" << std::endl;
+            wcout << L"Clipping point added: (" << p.x << L", " << p.y << L")" << endl;
         }
         else {
             startPoint.x = LOWORD(lParam);
@@ -2068,8 +2069,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
 
                 // Important: if targetColor is the same as fillColor, nothing to do.
                 if (targetColor == fillColor) {
-                    std::wcout << L"Clicked on an area already filled with the current fill color." << std::endl;
-                    return 0;  
+                    wcout << L"Clicked on an area already filled with the current fill color." << endl;
+                    return 0;
                 }
 
                 DrawnShape newShape;
@@ -2077,7 +2078,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 newShape.filledRegion.seedPoint = startPoint;
                 newShape.filledRegion.fillColor = fillColor;
                 newShape.filledRegion.algo = fillAlgorithm;
-                newShape.filledRegion.targetColor = targetColor; 
+                newShape.filledRegion.targetColor = targetColor;
 
                 if (fillAlgorithm == FILL_ALGO_RECURSIVE) {
                     FloodFillRecursive(hMemDC, startPoint.x, startPoint.y, fillColor, targetColor);
@@ -2086,16 +2087,16 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                     FloodFillNRecursive(hMemDC, startPoint.x, startPoint.y, targetColor, fillColor);
                 }
                 drawnShapes.push_back(newShape);
-                InvalidateRect(hwnd, NULL, FALSE); 
+                InvalidateRect(hwnd, NULL, FALSE);
             }
             else if (drawingMode == MODE_CARDINAL_SPLINE) {
                 controlPoints.push_back(startPoint);
                 InvalidateRect(hwnd, NULL, FALSE);
-                std::wcout << L"Cardinal Spline Control Point added: (" << startPoint.x << L", " << startPoint.y << L")" << std::endl;
+                wcout << L"Cardinal Spline Control Point added: (" << startPoint.x << L", " << startPoint.y << L")" << endl;
             }
             else if (drawingMode == MODE_DRAW_POLYGON) {
                 if (!isPolygonStarted) {
-                    currentPolygonVertices.clear(); 
+                    currentPolygonVertices.clear();
                     isPolygonStarted = true;
                 }
                 currentPolygonVertices.push_back(startPoint);
@@ -2103,7 +2104,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 SetPixel(tempHDC, startPoint.x, startPoint.y, drawColor);
                 ReleaseDC(hwnd, tempHDC);
 
-                std::wcout << L"Polygon Vertex added: (" << startPoint.x << L", " << startPoint.y << L")" << std::endl;
+                wcout << L"Polygon Vertex added: (" << startPoint.x << L", " << startPoint.y << L")" << endl;
                 InvalidateRect(hwnd, NULL, FALSE);
             }
             // FILL_Circle
@@ -2128,7 +2129,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 SetCursor(LoadCursor(NULL, IDC_ARROW));
             }
             else if (drawingMode == MODE_FILL_SQUARE_HERMIT) {
-                if (controlPoints.size() == 1) { 
+                if (controlPoints.size() == 1) {
                     RECT square = {
                         min(controlPoints[0].x, controlPoints[1].x),
                         min(controlPoints[0].y, controlPoints[1].y),
@@ -2136,7 +2137,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                         max(controlPoints[0].y, controlPoints[1].y)
                     };
                 }
-                else if (controlPoints.size() == 2) { 
+                else if (controlPoints.size() == 2) {
                     RECT square = {
                          min(controlPoints[0].x, controlPoints[1].x),
                          min(controlPoints[0].y, controlPoints[1].y),
@@ -2187,16 +2188,16 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 break;
             }
             case MODE_CARDINAL_SPLINE:
-                
+
                 for (const auto& p : controlPoints) {
-                    SetPixelSafe(hdcWindow, p.x, p.y, RGB(255, 0, 255)); 
-                    DrawDirectCircle(hdcWindow, p.x, p.y, 2, RGB(255, 0, 255)); 
+                    SetPixelSafe(hdcWindow, p.x, p.y, RGB(255, 0, 255));
+                    DrawDirectCircle(hdcWindow, p.x, p.y, 2, RGB(255, 0, 255));
                 }
-               
+
                 if (!controlPoints.empty()) {
                     DrawLine(hdcWindow, controlPoints.back().x, controlPoints.back().y, endPoint.x, endPoint.y, drawColor);
                 }
-                
+
                 if (controlPoints.size() >= 4) {
                     DrawCardinalSpline(hdcWindow, controlPoints, 0.0, drawColor);
                 }
@@ -2210,12 +2211,12 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                     DrawLine(hdcWindow, currentPolygonVertices[i].x, currentPolygonVertices[i].y,
                         currentPolygonVertices[i + 1].x, currentPolygonVertices[i + 1].y, drawColor);
                 }
-               
+
                 if (currentPolygonVertices.size() > 2) {
                     DrawLine(hdcWindow, currentPolygonVertices.back().x, currentPolygonVertices.back().y,
                         currentPolygonVertices[0].x, currentPolygonVertices[0].y, drawColor);
                 }
-                
+
                 if (!currentPolygonVertices.empty()) {
                     DrawLine(hdcWindow, currentPolygonVertices.back().x, currentPolygonVertices.back().y,
                         endPoint.x, endPoint.y, drawColor);
@@ -2293,7 +2294,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
 
         break;
 
-    case WM_RBUTTONDOWN: 
+    case WM_RBUTTONDOWN:
         if (clippingMode != CLIPPING_NONE) {
             if (clippingShapeType == CLIP_POLYGON && clippingPoints.size() >= 3) {
                 DrawnShape newShape;
@@ -2349,40 +2350,40 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 DrawCardinalSpline(hMemDC, newShape.spline.points, newShape.spline.tension, newShape.spline.color);
 
                 controlPoints.clear();
-                InvalidateRect(hwnd, NULL, FALSE); 
+                InvalidateRect(hwnd, NULL, FALSE);
                 drawingMode = MODE_NONE;
                 SetCursor(hCursorArrow);
-                std::wcout << L"Cardinal Spline finished." << std::endl;
+                wcout << L"Cardinal Spline finished." << endl;
             }
             else {
                 MessageBox(hwnd, L"Cardinal Spline requires at least 4 control points. Drawing cancelled.", L"Warning", MB_OK | MB_ICONWARNING);
                 controlPoints.clear();
-                RedrawAllShapesToBitmap(hMemDC); 
+                RedrawAllShapesToBitmap(hMemDC);
                 InvalidateRect(hwnd, NULL, FALSE);
                 drawingMode = MODE_NONE;
                 //SetCursor(hCursorArrow);
             }
-            return 0; 
+            return 0;
         }
         else if (drawingMode == MODE_DRAW_POLYGON) {
-            if (currentPolygonVertices.size() >= 3) { 
+            if (currentPolygonVertices.size() >= 3) {
                 DrawnShape newShape;
                 newShape.type = SHAPE_POLYGON;
                 new (&newShape.polygon) PolygonShape();
-                newShape.polygon.vertices = currentPolygonVertices; 
+                newShape.polygon.vertices = currentPolygonVertices;
                 newShape.polygon.drawcolor = drawColor;
                 newShape.polygon.fill = fillColor;
-                newShape.polygon.fillType = polygonFillType; 
+                newShape.polygon.fillType = polygonFillType;
 
                 drawnShapes.push_back(newShape);
                 DrawFilledPolygon(hMemDC, newShape.polygon.vertices, newShape.polygon.drawcolor, newShape.polygon.fillType, newShape.polygon.fill);
 
                 currentPolygonVertices.clear();
                 isPolygonStarted = false;
-                drawingMode = MODE_NONE; 
+                drawingMode = MODE_NONE;
                 SetCursor(hCursorArrow);
-                InvalidateRect(hwnd, NULL, FALSE); 
-                std::wcout << L"Polygon finished and drawn." << std::endl;
+                InvalidateRect(hwnd, NULL, FALSE);
+                wcout << L"Polygon finished and drawn." << endl;
             }
             else {
                 MessageBox(hwnd, L"Polygon must have at least 3 vertices to be drawn. Drawing cancelled.", L"Warning", MB_OK | MB_ICONWARNING);
@@ -2390,14 +2391,14 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 isPolygonStarted = false;
                 drawingMode = MODE_NONE;
                 SetCursor(hCursorArrow);
-                RedrawAllShapesToBitmap(hMemDC); 
+                RedrawAllShapesToBitmap(hMemDC);
                 InvalidateRect(hwnd, NULL, FALSE);
                 currentCursor = hCursorArrow;
                 SetCursor(hCursorArrow);
             }
-            return 0; 
+            return 0;
         }
-        break; 
+        break;
 
     case WM_PAINT:
         hdc = BeginPaint(hwnd, &ps);
@@ -2421,39 +2422,39 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             case MODE_DRAW_ELLIPSE: {
                 int a = abs(endPoint.x - startPoint.x);
                 int b = abs(endPoint.y - startPoint.y);
-                DrawDirectEllipse(hdc, startPoint.x, startPoint.y, a, b, drawColor); 
+                DrawDirectEllipse(hdc, startPoint.x, startPoint.y, a, b, drawColor);
                 break;
             }
             }
         }
         else if (drawingMode == MODE_CARDINAL_SPLINE) {
-            
+
             for (const auto& p : controlPoints) {
-                SetPixelSafe(hdc, p.x, p.y, RGB(255, 0, 255)); 
+                SetPixelSafe(hdc, p.x, p.y, RGB(255, 0, 255));
                 DrawDirectCircle(hdc, p.x, p.y, 2, RGB(255, 0, 255));
             }
-          
+
             if (controlPoints.size() >= 4) {
-                DrawCardinalSpline(hdc, controlPoints, 0.0, drawColor); 
+                DrawCardinalSpline(hdc, controlPoints, 0.0, drawColor);
             }
         }
         else if (drawingMode == MODE_DRAW_POLYGON) {
-            
+
             for (const auto& p : currentPolygonVertices) {
-                SetPixelSafe(hdc, p.x, p.y, RGB(255, 0, 255)); 
-                DrawDirectCircle(hdc, p.x, p.y, 2, RGB(255, 0, 255)); 
+                SetPixelSafe(hdc, p.x, p.y, RGB(255, 0, 255));
+                DrawDirectCircle(hdc, p.x, p.y, 2, RGB(255, 0, 255));
             }
-            
+
             for (size_t i = 0; i + 1 < currentPolygonVertices.size(); ++i) {
                 DrawLine(hdc, currentPolygonVertices[i].x, currentPolygonVertices[i].y, currentPolygonVertices[i + 1].x, currentPolygonVertices[i + 1].y, drawColor);
             }
-            
+
             if (isDrawing && !currentPolygonVertices.empty()) {
                 DrawLine(hdc, currentPolygonVertices.back().x, currentPolygonVertices.back().y, endPoint.x, endPoint.y, drawColor);
             }
         }
         else if (drawingMode == MODE_BEZIER_ANIMATION) {
-            
+
             HPEN hPenRect = CreatePen(PS_SOLID, 3, drawColor);
             HPEN oldPenRect = (HPEN)SelectObject(hdc, hPenRect);
             HBRUSH hBrushNull = (HBRUSH)GetStockObject(NULL_BRUSH);
@@ -2465,10 +2466,10 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             SelectObject(hdc, oldBrush);
             DeleteObject(hPenRect);
             int rectHeight = bezierRect.bottom - bezierRect.top;
-            int spacing = rectHeight / (NUM_CURVES + 1);
+            int space= rectHeight / (NUM_CURVES + 1);
 
             for (int i = 0; i < NUM_CURVES; ++i) {
-                int y = bezierRect.top + (i + 1) * spacing;
+                int y = bezierRect.top + (i + 1) * space;
 
                 POINT P0 = { bezierRect.left, y };
                 POINT P1 = { bezierRect.left + (bezierRect.right - bezierRect.left) / 3,
@@ -2477,7 +2478,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                             y + ((i % 2 == 0) ? 40 : -40) };
                 POINT P3 = { bezierRect.right, y };
 
-                DrawBezierStep(hdc, P0, P1, P2, P3, currentStep, curveColors[i]);
+				DrawBezierStep(hdc, P0, P1, P2, P3, currentStep, drawColor);
             }
         }
         else if (clippingMode != CLIPPING_NONE) {
@@ -2494,16 +2495,16 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
         return TRUE;
 
     case WM_DESTROY:
-        
+
         if (hMemDC) {
-            SelectObject(hMemDC, hOldBitmap); 
-            DeleteDC(hMemDC); 
+            SelectObject(hMemDC, hOldBitmap);
+            DeleteDC(hMemDC);
         }
         if (hBitmap) {
             DeleteObject(hBitmap);
         }
         KillTimer(hwnd, TIMER_ID);
-        FreeConsole(); 
+        FreeConsole();
         PostQuitMessage(0);
         break;
 
@@ -2555,7 +2556,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     }
 
     ShowWindow(hwnd, nCmdShow);
-    UpdateWindow(hwnd); 
+    UpdateWindow(hwnd);
     MSG Msg;
     while (GetMessage(&Msg, NULL, 0, 0) > 0) {
         TranslateMessage(&Msg);
