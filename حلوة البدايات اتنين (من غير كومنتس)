@@ -1,10 +1,10 @@
 #define _USE_MATH_DEFINES
 #define _CRT_SECURE_NO_WARNINGS
-#define NUM_CURVES 50
-#define NUM_STEPS 100
 #define TIMER_ID 1
 #define TIMER_INTERVAL 40
-
+#include <locale>
+#include <codecvt>
+#define DOUBLE_BUFFERING 1
 #include <windows.h>
 #include <vector>
 #include <stack>
@@ -33,6 +33,7 @@ enum DrawingMode {
     MODE_FILL_SQUARE_HERMIT,
     MODE_FILL_CIRCLE,
     MODE_BEZIER_ANIMATION,
+
     MODE_CLIPPING
 };
 
@@ -174,6 +175,13 @@ struct ClippedShape {
     COLORREF color;
     ClippingShapeType type;
 };
+
+struct BezierBox {
+    RECT rect;
+    std::vector<std::array<POINT, 4>> curves;
+    COLORREF color;
+};
+
 
 struct DrawnShape {
     ShapeType type;
@@ -326,7 +334,18 @@ vector<POINT> currentPolygonVertices;
 bool isPolygonStarted = false;
 int selectedFillQuarter = 0;
 
-RECT bezierRect = { 100, 100, 700, 500 };
+//RECT bezierRect = { 100, 100, 700, 500 };
+RECT bezierRect; // المستطيل الذي يحتوي على المنحنيات
+COLORREF curveColors[5] = {
+    RGB(255, 0, 0),
+    RGB(0, 255, 0),
+    RGB(0, 0, 255),
+    RGB(255, 255, 0),
+    RGB(255, 0, 255)
+
+};
+const int NUM_CURVES = 100;
+
 //COLORREF curveColors[NUM_CURVES] = {
 //    RGB(255, 0, 0),    // Red
 //    RGB(0, 128, 0),    // Green
@@ -336,6 +355,8 @@ RECT bezierRect = { 100, 100, 700, 500 };
 //};
 int currentStep = 0;
 bool isAnimating = false;
+std::vector<BezierBox> allBezierBoxes;
+
 
 // =============================================
 // Utility Functions
@@ -765,31 +786,106 @@ void DrawCardinalSpline(HDC targetDC, const vector<POINT>& points, double tensio
 
 // ----------------- Bezier drawing Algorithm -----------------
 
-void DrawBezierStep(HDC hdc, POINT P0, POINT P1, POINT P2, POINT P3, int stepsToDraw, COLORREF color) {
-    HPEN hPen = CreatePen(PS_SOLID, 2, color);
-    HPEN oldPen = (HPEN)SelectObject(hdc, hPen);
+void DrawBezierStep(HDC hdc, POINT p0, POINT p1, POINT p2, POINT p3, COLORREF color, int& minY, int& maxY) {
+    const int NUM_STEPS = 100;
+    for (int i = 0; i <= NUM_STEPS; ++i) {
+        double t = (double)i / NUM_STEPS;
+        double one_minus_t = 1.0 - t;
 
-    MoveToEx(hdc, P0.x, P0.y, NULL);
-    for (int step = 1; step <= stepsToDraw; ++step) {
-        double t = (double)step / NUM_STEPS;
-        double invT = 1.0 - t;
+        double x = one_minus_t * one_minus_t * one_minus_t * p0.x +
+                   3 * one_minus_t * one_minus_t * t * p1.x +
+                   3 * one_minus_t * t * t * p2.x +
+                   t * t * t * p3.x;
 
-        double x = invT * invT * invT * P0.x
-            + 3 * invT * invT * t * P1.x
-            + 3 * invT * t * t * P2.x
-            + t * t * t * P3.x;
+        double y = one_minus_t * one_minus_t * one_minus_t * p0.y +
+                   3 * one_minus_t * one_minus_t * t * p1.y +
+                   3 * one_minus_t * t * t * p2.y +
+                   t * t * t * p3.y;
 
-        double y = invT * invT * invT * P0.y
-            + 3 * invT * invT * t * P1.y
-            + 3 * invT * t * t * P2.y
-            + t * t * t * P3.y;
+        int ix = Round(x);
+        int iy = Round(y);
 
-        LineTo(hdc, (int)x, (int)y);
+        SetPixelSafe(hdc, ix, iy, color);
+
+        if (iy < minY) minY = iy;
+        if (iy > maxY) maxY = iy;
+    }
+}
+
+
+void DrawStaticBezierSet(HDC hdc, RECT rect, int numCurves, COLORREF color) {
+    int height = rect.bottom - rect.top;
+    int spacing = height / (numCurves + 1);
+
+    int actualTop = INT_MAX;
+    int actualBottom = INT_MIN;
+
+    for (int i = 0; i < numCurves; ++i) {
+        int y = rect.top + (i + 1) * spacing;
+
+
+        POINT P0 = { rect.left, y };
+        POINT P1 = { rect.left + (rect.right - rect.left) / 3, y - 40 };
+        POINT P2 = { rect.left + 2 * (rect.right - rect.left) / 3, y - 40 };
+        POINT P3 = { rect.right, y };
+
+
+        DrawBezierStep(hdc, P0, P1, P2, P3, color, actualTop, actualBottom);
     }
 
+
+    HPEN hPen = CreatePen(PS_SOLID, 1, color);
+    HPEN oldPen = (HPEN)SelectObject(hdc, hPen);
+    HBRUSH oldBrush = (HBRUSH)SelectObject(hdc, GetStockObject(NULL_BRUSH));
+
+    Rectangle(hdc, rect.left, actualTop, rect.right, actualBottom);
+
+    SelectObject(hdc, oldBrush);
     SelectObject(hdc, oldPen);
     DeleteObject(hPen);
 }
+
+void CalculateBezierBounds(POINT p0, POINT p1, POINT p2, POINT p3, int& minY, int& maxY) {
+    const int NUM_STEPS = 100;
+    for (int i = 0; i <= NUM_STEPS; ++i) {
+        double t = (double)i / NUM_STEPS;
+        double one_minus_t = 1.0 - t;
+
+
+        double y = one_minus_t * one_minus_t * one_minus_t * p0.y +
+                   3 * one_minus_t * one_minus_t * t * p1.y +
+                   3 * one_minus_t * t * t * p2.y +
+                   t * t * t * p3.y;
+
+        int iy = Round(y);
+        if (iy < minY) minY = iy;
+        if (iy > maxY) maxY = iy;
+    }
+}
+
+void DrawSingleBezierRect(HDC hdc, const BezierBox& box) {
+    int actualTop = INT_MAX;
+    int actualBottom = INT_MIN;
+
+    for (const auto& curve : box.curves) {
+        CalculateBezierBounds(curve[0], curve[1], curve[2], curve[3], actualTop, actualBottom);
+    }
+
+    HPEN hPen = CreatePen(PS_SOLID, 2, box.color);
+    HGDIOBJ oldPen = SelectObject(hdc, hPen);
+    HBRUSH hOldBrush = (HBRUSH)SelectObject(hdc, GetStockObject(NULL_BRUSH));
+    Rectangle(hdc, box.rect.left, actualTop, box.rect.right, actualBottom);
+
+    for (const auto& curve : box.curves) {
+        int dummyMin = 0, dummyMax = 0;
+        DrawBezierStep(hdc, curve[0], curve[1], curve[2], curve[3], box.color, dummyMin, dummyMax);
+    }
+
+    SelectObject(hdc, hOldBrush);
+    SelectObject(hdc, oldPen);
+    DeleteObject(hPen);
+}
+
 
 // ----------------- Polygon Algorithms -----------------
 void DrawPolygonOutline(HDC hdc, const vector<POINT>& vertices, COLORREF color) {
@@ -797,7 +893,7 @@ void DrawPolygonOutline(HDC hdc, const vector<POINT>& vertices, COLORREF color) 
     for (size_t i = 0; i < vertices.size(); ++i) {
         POINT p1 = vertices[i];
         POINT p2 = vertices[(i + 1) % vertices.size()]; // Connect last to first
-        DrawLine(hdc, p1.x, p1.y, p2.x, p2.y, color); // Use your Bresenham/DDA
+        DrawLine(hdc, p1.x, p1.y, p2.x, p2.y, color);
     }
 }
 
@@ -820,8 +916,8 @@ void ConvexPolygonFill(HDC hdc, const vector<POINT>& vertices, COLORREF color) {
             POINT p1 = vertices[i];
             POINT p2 = vertices[(i + 1) % vertices.size()];
 
-            if ((p1.y <= y && p2.y > y) || (p2.y <= y && p1.y > y)) { // Edge crosses scanline
-                if (p1.y == p2.y) continue; // Horizontal line, ignore for intersection calculation
+            if ((p1.y <= y && p2.y > y) || (p2.y <= y && p1.y > y)) {
+                if (p1.y == p2.y) continue;
 
                 double x_intersect = p1.x + (double)(y - p1.y) * (p2.x - p1.x) / (p2.y - p1.y);
                 intersections.push_back(x_intersect);
@@ -845,9 +941,7 @@ void ConvexPolygonFill(HDC hdc, const vector<POINT>& vertices, COLORREF color) {
 void NonConvexPolygonFill(HDC hdc, const vector<POINT>& vertices, COLORREF color) {
     if (vertices.size() <= 3) return;
 
-    // 1. Build Edge Table (ET)
-    // ET is an array of lists. Each list contains edges sorted by yMin.
-    // The index of the array corresponds to the y-coordinate.
+
     int minY = INT_MAX;
     int maxY = INT_MIN;
 
@@ -856,13 +950,13 @@ void NonConvexPolygonFill(HDC hdc, const vector<POINT>& vertices, COLORREF color
         if (p.y > maxY) maxY = p.y;
     }
 
-    vector<vector<Edge>> edgeTable(maxY + 1); // Size based on max Y
+    vector<vector<Edge>> edgeTable(maxY + 1);
 
     for (size_t i = 0; i < vertices.size(); ++i) {
         POINT p1 = vertices[i];
         POINT p2 = vertices[(i + 1) % vertices.size()];
 
-        // Skip horizontal lines as they don't contribute to intersections
+
         if (p1.y == p2.y) continue;
 
         Edge edge;
@@ -881,29 +975,29 @@ void NonConvexPolygonFill(HDC hdc, const vector<POINT>& vertices, COLORREF color
         edgeTable[edge.yMin].push_back(edge);
     }
 
-    // 2. Initialize Active Edge List (AEL)
+
     vector<Edge> activeEdgeList;
 
-    // 3. Process Scanlines
+
     for (int y = minY; y <= maxY; ++y) {
-        // Add new edges from ET to AEL
+
         for (const auto& edge : edgeTable[y]) {
             activeEdgeList.push_back(edge);
         }
 
-        // Remove edges from AEL that have reached their yMax
+
         activeEdgeList.erase(
             remove_if(activeEdgeList.begin(), activeEdgeList.end(),
-                [y](const Edge& e) { return e.yMax == y; }), // yMax is exclusive for the last pixel
+                [y](const Edge& e) { return e.yMax == y; }),
             activeEdgeList.end()
         );
 
-        // Sort AEL by current x-coordinate
+
         sort(activeEdgeList.begin(), activeEdgeList.end(), [](const Edge& a, const Edge& b) {
             return a.x < b.x;
             });
 
-        // Fill pixels between pairs of edges in AEL
+
         for (size_t i = 0; i + 1 < activeEdgeList.size(); i += 2) {
             int x1 = Round(activeEdgeList[i].x);
             int x2 = Round(activeEdgeList[i + 1].x);
@@ -913,7 +1007,7 @@ void NonConvexPolygonFill(HDC hdc, const vector<POINT>& vertices, COLORREF color
             }
         }
 
-        // Update x-coordinates for edges in AEL for the next scanline
+
         for (auto& edge : activeEdgeList) {
             edge.x += edge.invSlope;
         }
@@ -1366,7 +1460,10 @@ void SaveToFile(HWND hwnd) {
     ofn.Flags = OFN_OVERWRITEPROMPT;
 
     if (GetSaveFileNameW(&ofn)) {
-        ofstream out(fileName, ios::binary);
+      std::wstring_convert<std::codecvt_utf8<wchar_t>> converter;
+      std::string fileNameStr = converter.to_bytes(fileName);
+      ofstream out(fileNameStr, ios::binary);
+
 
         if (!out) return;
 
@@ -1428,7 +1525,9 @@ void LoadFromFile(HWND hwnd) {
     ofn.Flags = OFN_FILEMUSTEXIST;
 
     if (GetOpenFileNameW(&ofn)) {
-        ifstream in(fileName, ios::binary);
+       std::wstring_convert<std::codecvt_utf8<wchar_t>> converter;
+       std::string fileNameStr = converter.to_bytes(fileName);
+       ifstream in(fileNameStr, ios::binary);
 
 
         if (!in) return;
@@ -1689,6 +1788,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
     case WM_CREATE:
 
         GetClientRect(hwnd, &clientRect);
+        SetTimer(hwnd, 1, 16, NULL);
 
         hdc = GetDC(hwnd);
         hMemDC = CreateCompatibleDC(hdc);
@@ -2014,16 +2114,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             return TRUE;
         }
         break;
-    case WM_TIMER:
-        if (isAnimating && currentStep < NUM_STEPS) {
-            currentStep++;
-            InvalidateRect(hwnd, NULL, TRUE);
-        }
-        else if (currentStep >= NUM_STEPS) {
-            KillTimer(hwnd, TIMER_ID);
-            isAnimating = false;
-        }
-        return 0;
+
     case WM_LBUTTONDOWN:
         if (clippingMode != CLIPPING_NONE) {
             POINT p = { LOWORD(lParam), HIWORD(lParam) };
@@ -2127,7 +2218,34 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 isDrawing = false;
                 drawingMode = MODE_NONE;
                 SetCursor(LoadCursor(NULL, IDC_ARROW));
-            }
+                }
+
+
+            else if (drawingMode == MODE_BEZIER_ANIMATION) {
+                POINT p = { LOWORD(lParam), HIWORD(lParam) };
+
+                RECT rect = {
+                    p.x - 100, p.y - 60,
+                    p.x + 100, p.y + 60
+                };
+                int height = rect.bottom - rect.top;
+                int spacing = height / (NUM_CURVES - 1);
+                BezierBox box;
+                box.rect = rect;
+                box.color = drawColor;
+                for (int i = 0; i < NUM_CURVES; ++i) {
+                    int y = rect.top + i * spacing;
+                    POINT P0 = { rect.left, y };
+                    POINT P1 = { rect.left + (rect.right - rect.left) / 3, y + ((i % 2 == 0) ? -40 : 40) };
+                    POINT P2 = { rect.left + 2 * (rect.right - rect.left) / 3, y + ((i % 2 == 0) ? 40 : -40) };
+                    POINT P3 = { rect.right, y };
+                    box.curves.push_back({ P0, P1, P2, P3 });
+                }
+                allBezierBoxes.push_back(box);
+                DrawSingleBezierRect(hMemDC, box);
+                InvalidateRect(hwnd, NULL, FALSE);
+                }
+
             else if (drawingMode == MODE_FILL_SQUARE_HERMIT) {
                 if (controlPoints.size() == 1) {
                     RECT square = {
@@ -2443,6 +2561,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             for (const auto& p : currentPolygonVertices) {
                 SetPixelSafe(hdc, p.x, p.y, RGB(255, 0, 255));
                 DrawDirectCircle(hdc, p.x, p.y, 2, RGB(255, 0, 255));
+
             }
 
             for (size_t i = 0; i + 1 < currentPolygonVertices.size(); ++i) {
@@ -2454,33 +2573,36 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             }
         }
         else if (drawingMode == MODE_BEZIER_ANIMATION) {
+                for (const auto& box : allBezierBoxes) {
+    // 1. احسب الحدود الفعلية أولاً (بدون رسم)
+    int actualTop = INT_MAX;
+    int actualBottom = INT_MIN;
 
-            HPEN hPenRect = CreatePen(PS_SOLID, 3, drawColor);
-            HPEN oldPenRect = (HPEN)SelectObject(hdc, hPenRect);
-            HBRUSH hBrushNull = (HBRUSH)GetStockObject(NULL_BRUSH);
-            HBRUSH oldBrush = (HBRUSH)SelectObject(hdc, hBrushNull);
+    for (const auto& curve : box.curves) {
+        // دالة مساعدة لحساب الحدود دون رسم
+        CalculateBezierBounds(curve[0], curve[1], curve[2], curve[3], actualTop, actualBottom);
+    }
 
-            Rectangle(hdc, bezierRect.left, bezierRect.top, bezierRect.right, bezierRect.bottom);
+    // 2. ارسم المستطيل بناء على الحدود المحسوبة
+    HPEN hPen = CreatePen(PS_SOLID, 2, box.color);
+    HGDIOBJ oldPen = SelectObject(hdc, hPen);
+    HBRUSH hOldBrush = (HBRUSH)SelectObject(hdc, GetStockObject(NULL_BRUSH));
+    Rectangle(hdc, box.rect.left, actualTop, box.rect.right, actualBottom);
 
-            SelectObject(hdc, oldPenRect);
-            SelectObject(hdc, oldBrush);
-            DeleteObject(hPenRect);
-            int rectHeight = bezierRect.bottom - bezierRect.top;
-            int space= rectHeight / (NUM_CURVES + 1);
+    // 3. الآن ارسم المنحنيات
+    for (const auto& curve : box.curves) {
+        int dummyMin = 0, dummyMax = 0; // لا نحتاج الحدود هنا
+        DrawBezierStep(hdc, curve[0], curve[1], curve[2], curve[3], box.color, dummyMin, dummyMax);
+    }
 
-            for (int i = 0; i < NUM_CURVES; ++i) {
-                int y = bezierRect.top + (i + 1) * space;
+    SelectObject(hdc, hOldBrush);
+    SelectObject(hdc, oldPen);
+    DeleteObject(hPen);
+}
+}
 
-                POINT P0 = { bezierRect.left, y };
-                POINT P1 = { bezierRect.left + (bezierRect.right - bezierRect.left) / 3,
-                            y + ((i % 2 == 0) ? -40 : 40) };
-                POINT P2 = { bezierRect.left + 2 * (bezierRect.right - bezierRect.left) / 3,
-                            y + ((i % 2 == 0) ? 40 : -40) };
-                POINT P3 = { bezierRect.right, y };
 
-				DrawBezierStep(hdc, P0, P1, P2, P3, currentStep, drawColor);
-            }
-        }
+
         else if (clippingMode != CLIPPING_NONE) {
             for (const auto& p : clippingPoints) {
                 SetPixelSafe(hdc, p.x, p.y, drawColor);
